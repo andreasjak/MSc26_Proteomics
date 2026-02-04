@@ -4,47 +4,65 @@
 PRIMARY = "#D97706"  # Amber/Orange
 SECONDARY = "#2F6F6D"  # Teal
 
-# Extended palette
+# Complete Color Palette
 PALETTE = {
-    "primary": "#D97706",      # Amber/Orange
-    "secondary": "#2F6F6D",    # Teal
-    "accent": "#7C3AED",       # Purple
-    "success": "#059669",      # Green
-    "warning": "#D97706",      # Amber/Orange
-    "danger": "#DC2626",       # Red
-    "info": "#0891B2",         # Cyan
+    # Main distributions / baseline
+    "primary":   "#D97706",  # Burnt Orange
+
+    # Control / comparison groups
+    "secondary": "#2F6F6D",  # Muted Teal
+
+    # Severity / ARDS / risk
+    "danger":    "#7A1F1F",  # Dark Red
+
+    # Secondary group / alternative method
+    "accent":    "#5B3A5D",  # Muted Plum
+
+    # Highlights / annotations (sparsam!)
+    "warning":   "#EAB308",  # Mustard Yellow
+
+    # Structural / neutral elements (edges, outlines)
+    "neutral":   "#7C4A1D",  # Warm Brown
 }
 
 # Color lists for categorical data
 CATEGORICAL = [
-    "#D97706",  # Amber
-    "#2F6F6D",  # Teal
-    "#7C3AED",  # Purple
-    "#059669",  # Green
-    "#DC2626",  # Red
-    "#0891B2",  # Cyan
-    "#F97316",  # Orange
-    "#EC4899",  # Pink
+    "#D97706",  # Burnt Orange (primary)
+    "#2F6F6D",  # Muted Teal (control/contrast)
+    "#5B3A5D",  # Muted Plum (secondary/method)
+    "#7A1F1F",  # Dark Red (risk/severity)
+    "#EAB308",  # Mustard Yellow (accent - sparsam)
+    "#7C4A1D",  # Warm Brown (neutral/structure)
 ]
 
-# Sequential palette (light to dark)
-SEQUENTIAL = [
-    "#F3E8FF",  # Very light purple
-    "#E9D5FF",  # Light purple
-    "#D8B4FE",  # Medium-light purple
-    "#C084FC",  # Medium purple
-    "#A855F7",  # Medium-dark purple
-    "#7C3AED",  # Dark purple
-    "#6D28D9",  # Very dark purple
+# Sequential colors for heatmaps etc
+SEQUENTIAL_TEAL = [
+    "#E6F2F1",  # very light teal
+    "#CFE5E3",
+    "#A9CFCC",
+    "#7FB6B3",
+    "#559B97",
+    "#2F6F6D",  # muted teal
 ]
+
+SEQUENTIAL_ORANGE = [
+    "#FEF3E2",  # very light warm
+    "#FDE6C8",
+    "#FBCF9A",
+    "#F7B56D",
+    "#F09A3E",
+    "#D97706",  # burnt orange
+]
+
 
 # ARDS/Sepsis specific
 ARDS_COLORS = {
-    "ARDS": "#DC2626",        # Red for ARDS
-    "Not ARDS": "#059669",    # Green for Not ARDS
-    "Mild ARDS": "#F59E0B",   # Amber for Mild ARDS
-    "Moderate/Severe ARDS": "#DC2626",  # Red for Moderate/Severe ARDS
+    "ARDS": "#5B3A5D",          # Dark Red (ARDS / outcome)
+    "Not ARDS":"#EAB308",      # Muted Teal (control)
+    "Mild ARDS": "#7A1F1F",     # Mustard (mild = "warning"/accent)
+    "Moderate/Severe ARDS": "#7A1F1F",  # Dark Red
 }
+
 
 # Utility function to get colors for a specific context
 def get_colors(context="categorical"):
@@ -63,7 +81,8 @@ def get_colors(context="categorical"):
     """
     contexts = {
         "categorical": CATEGORICAL,
-        "sequential": SEQUENTIAL,
+        "sequential_teal": SEQUENTIAL_TEAL,
+        "sequential_orange": SEQUENTIAL_ORANGE,
         "ards": ARDS_COLORS,
         "palette": PALETTE,
     }
