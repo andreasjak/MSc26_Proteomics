@@ -6,6 +6,8 @@ Research project investigating proteomics data analysis
 
 ```
 MSc26_Proteomics/
+├── logs/                          # Logs from runs (not tracked in git)
+├── results/                       # Results (not tracked in git)
 ├── data/                          # Data files (not tracked in git)
 │   ├── raw/                       # Raw, unprocessed data
 │   └── processed/                 # Processed data from preprocessing scripts
