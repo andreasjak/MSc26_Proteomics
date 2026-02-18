@@ -31,12 +31,14 @@ from xgboost import XGBClassifier
 
 from styles.colors import get_colors
 
+import time
+start_time = time.time()
 
 # ============================================================
 # Configuration
 # ============================================================
 DATA_PATH = "data/processed/filtered_data.csv"
-ANNOT_PATH = "Attilas/somalogic_annotation.csv"
+ANNOT_PATH = "data/processed/somalogic_annotation.csv"
 
 TEST_SIZE = 0.05
 VAL_FRAC = 0.20
@@ -537,3 +539,5 @@ print()
 print("=" * 70)
 print("Pipeline completed successfully!")
 print("=" * 70)
+
+print(f"Total runtime: {time.time() - start_time:.2f} seconds")
