@@ -40,11 +40,11 @@ from pathlib import Path
 import time
 start_time = time.time()
 
-# Set HEADLESS=1 to disable interactive plotting and only save figures to disk.
-HEADLESS = os.environ.get("HEADLESS", "0") == "1"
+# Set SAVE_RESULTS=1 to disable interactive plotting and only save figures to disk.
+SAVE_RESULTS = os.environ.get("SAVE_RESULTS", "0") == "1"
 
-# Use a non-interactive matplotlib backend on headless machines
-if HEADLESS:
+# Use a non-interactive matplotlib backend on SAVE_RESULTS machines
+if SAVE_RESULTS:
     import matplotlib
     matplotlib.use("Agg")
 
@@ -215,9 +215,9 @@ if mt_method is None:
 
 _, adj_p, _, _ = multipletests(results["pval"].values, method=mt_method)
 results["ADJ_P"] = adj_p
-results = results.sort_values(["ADJ_P", "pval"], ascending=True).reset_index(drop=True)
+results = results.sort_values(["ADJ_P", "pval"], ascending=[True, False]).reset_index(drop=True)
 
-if HEADLESS:
+if SAVE_RESULTS:
     results_out = RESULTS_DIR / "results_ttest.csv"
     results.to_csv(results_out, index=False)
     print(f"Saved t-test results table to: {results_out}")
@@ -310,7 +310,7 @@ plt.title(
 plt.legend(frameon=False)
 plt.tight_layout()
 
-if HEADLESS:
+if SAVE_RESULTS:
     volcano_out = RESULTS_DIR / "volcano_ttest_plot.png"
     plt.savefig(volcano_out, dpi=300, bbox_inches="tight")
     print(f"Saved volcano plot to: {volcano_out}")
