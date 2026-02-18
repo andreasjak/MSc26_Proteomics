@@ -1,0 +1,21 @@
+name: proteomicsEnv
+channels:
+  - conda-forge
+dependencies:
+  - python=3.12
+  - numpy
+  - pandas
+  - scipy
+  - matplotlib
+  - statsmodels
+  - scikit-learn
+  - imbalanced-learn
+  - seaborn
+  - joblib
+  - adjusttext
+  - xgboost
+  - infomeasure
+  - pip
+  - git
+  - pip:
+      - git+https://github.com/gregversteeg/NPEET.git@8b0d9485423f74e5eb199324cf362765596538d3
