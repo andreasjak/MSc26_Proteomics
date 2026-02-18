@@ -173,3 +173,5 @@ if SAVE_RESULTS:
     out_path = RESULTS_DIR / "results_mi_uni_test.csv"
     mi_results.to_csv(out_path, index=False)
     print(f"\nResults saved to: {out_path}")
+
+print(f"Total runtime: {time.time() - start_time:.2f} seconds")
