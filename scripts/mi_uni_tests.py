@@ -135,6 +135,7 @@ print(f"\nRunning {N_PERM} permutations …")
 for b in range(N_PERM):
     if N_PERM >= 10 and (b + 1) % (N_PERM // 10) == 0:
         print(f"  Permutation {b + 1}/{N_PERM} ({(b + 1) / N_PERM:.0%})")
+        print(f"  Time elapsed: {time.time() - start_time:.2f} seconds")
     y_perm = rng.permutation(y_tr)
     mi_perm = mutual_info_classif(
         X_perm,
