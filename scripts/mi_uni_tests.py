@@ -46,7 +46,6 @@ RANDOM_STATE    = 42
 N_NEIGHBORS     = 3             # k-NN neighbours for MI estimation (Kraskov)
 N_PERM          = 1000          # permutations for empirical p-values
 FDR_ALPHA       = 0.05
-N_PROTEINS      = -1           # number of top proteins to permute (for speed), -1 for all
 
 # ── 1. Load data ──────────────────────────────────────────────────────────────
 data = pd.read_csv(DATA_PATH, index_col=0, low_memory=False)
@@ -128,12 +127,14 @@ print(mi_results.head(15).to_string(index=False))
 rng     = np.random.default_rng(RANDOM_STATE)
 mi_obs  = mi_results["MI"].values
 prot_order = mi_results["Protein"].tolist()
-X_perm  = X_prot[prot_order[:N_PROTEINS]].values
+X_perm  = X_prot[prot_order].values
 
-perm_counts = np.zeros(len(prot_order[:N_PROTEINS]), dtype=int)
+perm_counts = np.zeros(len(prot_order), dtype=int)
 
 print(f"\nRunning {N_PERM} permutations …")
 for b in range(N_PERM):
+    if N_PERM >= 10 and (b + 1) % (N_PERM // 10) == 0:
+        print(f"  Permutation {b + 1}/{N_PERM} ({(b + 1) / N_PERM:.0%})")
     y_perm = rng.permutation(y_tr)
     mi_perm = mutual_info_classif(
         X_perm,
@@ -142,14 +143,10 @@ for b in range(N_PERM):
         n_neighbors=N_NEIGHBORS,
         random_state=RANDOM_STATE,
     )
-    perm_counts += (mi_perm >= mi_obs[:N_PROTEINS])
+    perm_counts += (mi_perm >= mi_obs)
 
 p_perm = (perm_counts + 1) / (N_PERM + 1)
-if N_PROTEINS == -1:
-    mi_results["p_perm"] = p_perm
-else:
-    mi_results["p_perm"] = np.nan
-    mi_results.loc[:N_PROTEINS-1, "p_perm"] = p_perm
+mi_results["p_perm"] = p_perm
 
 
 # Benjamini-Hochberg FDR correction
