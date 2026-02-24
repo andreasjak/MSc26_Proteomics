@@ -50,3 +50,22 @@ or
 ```powershell
 python .\scripts\<script_name>.py --help
 ```
+
+## Environment setup
+### Create the environment
+From the project root (where `environment.yml` is located):
+
+```bash
+conda env create -f environment.yml
+```
+
+### Activate the environment
+```bash
+conda activate proteomicsEnv
+```
+
+### Update the environment 
+If `environment.yml` changes:
+```bash
+conda env update -f environment.yml --prune
+```
