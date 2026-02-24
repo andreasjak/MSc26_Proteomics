@@ -20,3 +20,33 @@ MSc26_Proteomics/
 ├── requirements.txt               # Python dependencies
 └── README.md                      # This file
 ```
+
+## Running scripts
+
+- All scripts now use **CLI arguments** (`argparse`) only.
+- Open a terminal in the project root (`MSc26_Proteomics`) and run commands from there.
+
+### General command format
+
+```powershell
+python .\scripts\<script_name>.py --arg1 value1 --arg2 value2
+```
+
+### Example
+
+```powershell
+python .\scripts\ttest.py --data-path .\data\processed\seen.csv --save-results --k 25
+```
+
+This example runs `ttest.py` on `seen.csv`, saves outputs (instead of interactive plotting), and writes a top-25 feature file (`selected_features_k25.csv`) along with the t-test results.
+
+### Help with scripts
+For help, discription and usage of script run:
+
+```powershell
+python .\scripts\<script_name>.py -h
+```
+or 
+```powershell
+python .\scripts\<script_name>.py --help
+```
