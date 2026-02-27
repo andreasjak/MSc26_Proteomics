@@ -236,8 +236,8 @@ def main() -> None:
     parser.add_argument(
         "--test-size",
         type=float,
-        default=0.05,
-        help="Fraction of data to hold out as the unseen test set (default: 0.05).",
+        default=0.20,
+        help="Fraction of data to hold out as the unseen test set (default: 0.20).",
     )
     parser.add_argument(
         "--random-state",
