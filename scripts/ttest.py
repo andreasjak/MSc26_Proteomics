@@ -23,7 +23,6 @@ import argparse
 import logging
 import re
 import time
-from datetime import datetime
 
 import matplotlib
 import numpy as np
@@ -32,45 +31,13 @@ from scipy import stats
 from statsmodels.stats.multitest import multipletests
 
 from styles.colors import get_colors
+from src.core.data_utils import load_annotation, load_data
+from src.core.logging_utils import setup_logging
 
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
 N_LABELS = 20
-
-
-# ---------------------------------------------------------------------------
-# Logging setup
-# ---------------------------------------------------------------------------
-
-def setup_logging(save_results: bool, log_subdir: str, script_name: str) -> logging.Logger:
-    """
-    Configure logging:
-      - save_results=False → StreamHandler (terminal) only
-      - save_results=True  → FileHandler (file) only, no terminal output
-    Log path: logs/<log_subdir>/<script_name>_YYYYMMDD_HHMMSS.log
-    """
-    logger = logging.getLogger(script_name)
-    logger.setLevel(logging.INFO)
-
-    formatter = logging.Formatter(
-        fmt="%(asctime)s  %(levelname)s  %(message)s",
-        datefmt="%H:%M:%S",
-    )
-
-    if save_results:
-        log_dir = Path("logs") / log_subdir
-        log_dir.mkdir(parents=True, exist_ok=True)
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        log_path = log_dir / f"{script_name}_{timestamp}.log"
-        handler: logging.Handler = logging.FileHandler(log_path)
-    else:
-        handler = logging.StreamHandler()
-
-    handler.setLevel(logging.INFO)
-    handler.setFormatter(formatter)
-    logger.addHandler(handler)
-    return logger
 
 
 # ---------------------------------------------------------------------------
@@ -89,29 +56,6 @@ def protein_to_probeid(name: str) -> str:
 # ---------------------------------------------------------------------------
 # Pipeline stages
 # ---------------------------------------------------------------------------
-
-def load_data(
-    data_path: Path,
-    annot_path: Path,
-    logger: logging.Logger,
-) -> tuple[pd.DataFrame, pd.DataFrame]:
-    """Load seen.csv and the SomaLogic annotation table."""
-    logger.info("Loading data from %s", data_path)
-    data = pd.read_csv(data_path)
-    logger.info("Data shape: %s", data.shape)
-
-    try:
-        annot = pd.read_csv(annot_path)
-        for col in ["PROBEID", "SYMBOL", "UNIPROT", "GENENAME"]:
-            if col in annot.columns:
-                annot[col] = annot[col].astype(str).replace({"nan": ""})
-        logger.info("Annotation loaded: %d rows", len(annot))
-    except FileNotFoundError:
-        logger.warning("Annotation file not found: %s — proceeding without symbols.", annot_path)
-        annot = pd.DataFrame(columns=["PROBEID", "SYMBOL", "UNIPROT", "GENENAME"])
-
-    return data, annot
-
 
 def run_ttests(data: pd.DataFrame, logger: logging.Logger) -> pd.DataFrame:
     """
@@ -347,7 +291,7 @@ def main() -> None:
     parser.add_argument(
         "--k",
         type=int,
-        default=10,
+        default=20,
         help="Number of top proteins to save as selected features (default: 10).",
     )
     args = parser.parse_args()
@@ -365,7 +309,8 @@ def main() -> None:
     )
 
     # Step 1: Load
-    data, annot = load_data(args.data_path, args.annot_path, logger)
+    data = load_data(args.data_path, logger)
+    annot = load_annotation(args.annot_path, logger)
 
     # Step 2: T-tests on all of seen.csv
     results = run_ttests(data, logger)

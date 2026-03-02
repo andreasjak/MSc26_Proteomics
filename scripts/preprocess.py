@@ -28,132 +28,8 @@ import time
 import pandas as pd
 from sklearn.model_selection import train_test_split
 
-# ---------------------------------------------------------------------------
-# Logging setup
-# ---------------------------------------------------------------------------
-
-def setup_logging() -> logging.Logger:
-    """Configure logging to terminal (StreamHandler) only."""
-    logger = logging.getLogger("preprocess")
-    logger.setLevel(logging.INFO)
-
-    handler = logging.StreamHandler()
-    handler.setLevel(logging.INFO)
-    handler.setFormatter(
-        logging.Formatter(
-            fmt="%(asctime)s  %(levelname)s  %(message)s",
-            datefmt="%H:%M:%S",
-        )
-    )
-    logger.addHandler(handler)
-    return logger
-
-
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
-def _is_not_mild(row: pd.Series) -> pd.Series:
-    """Return a boolean Series indicating whether each sample is 'not mild' ARDS.
-
-    Uses whichever of ards_severity / ards_mild / ards_notmild is non-NaN.
-    If multiple columns are populated and they conflict, the sample is dropped
-    (returns NaN so it can be identified downstream).
-    """
-    votes_notmild = []
-
-    if pd.notna(row.get("ards_severity")):
-        votes_notmild.append(str(row["ards_severity"]).strip().lower() != "mild")
-
-    if pd.notna(row.get("ards_mild")):
-        votes_notmild.append(not bool(row["ards_mild"]))
-
-    if pd.notna(row.get("ards_notmild")):
-        votes_notmild.append(bool(row["ards_notmild"]))
-
-    if not votes_notmild:
-        return None  # no severity info available
-
-    if len(set(votes_notmild)) > 1:
-        return None  # columns contradict each other
-
-    return votes_notmild[0]
-
-
-def resolve_notmild(df: pd.DataFrame, logger: logging.Logger) -> pd.DataFrame:
-    """Add a resolved '_not_mild_ards' column; return only rows with a clear verdict."""
-    df = df.copy()
-    df["_not_mild_ards"] = df.apply(_is_not_mild, axis=1)
-
-    n_no_info = df["_not_mild_ards"].isna().sum()
-    if n_no_info:
-        logger.warning(
-            "%d ARDS-positive sample(s) dropped: missing or contradictory "
-            "severity information across ards_severity / ards_mild / ards_notmild.",
-            n_no_info,
-        )
-
-    return df[df["_not_mild_ards"].notna()].copy()
-
-
-# ---------------------------------------------------------------------------
-# Pipeline stages
-# ---------------------------------------------------------------------------
-
-def load_and_filter(raw_path: Path, logger: logging.Logger) -> pd.DataFrame:
-    """Load raw data and apply cohort filtering logic."""
-    # ------------------------------------------------------------------
-    # 1. Load
-    # ------------------------------------------------------------------
-    logger.info("Loading %s", raw_path)
-    df = pd.read_csv(raw_path)
-    logger.info("Loaded %d rows, %d columns", *df.shape)
-
-    # ------------------------------------------------------------------
-    # 2. Require non-NaN Sepsis and ards columns — drop anything else
-    # ------------------------------------------------------------------
-    n_before = len(df)
-    df = df.dropna(subset=["Sepsis", "ards"])
-    n_dropped = n_before - len(df)
-    if n_dropped:
-        logger.warning(
-            "Dropped %d row(s) with missing Sepsis or ards values.", n_dropped
-        )
-    logger.info("%d rows remain after requiring Sepsis and ards values.", len(df))
-
-    # Cast to bool to be safe with 0/1 or True/False encodings
-    df["Sepsis"] = df["Sepsis"].astype(bool)
-    df["ards"] = df["ards"].astype(bool)
-
-    # ------------------------------------------------------------------
-    # 3. Cohort 1 — Sepsis, no ARDS
-    # ------------------------------------------------------------------
-    cohort1 = df[df["Sepsis"] & ~df["ards"]].copy()
-    logger.info("Cohort 1 (Sepsis, no ARDS): %d samples", len(cohort1))
-
-    # ------------------------------------------------------------------
-    # 4. Cohort 2 — Sepsis + ARDS, severity not mild
-    # ------------------------------------------------------------------
-    ards_positive = df[df["Sepsis"] & df["ards"]].copy()
-    logger.info(
-        "Sepsis + ARDS (before severity filter): %d samples", len(ards_positive)
-    )
-
-    ards_resolved = resolve_notmild(ards_positive, logger)
-    cohort2 = ards_resolved[ards_resolved["_not_mild_ards"]].drop(
-        columns=["_not_mild_ards"]
-    )
-    logger.info("Cohort 2 (Sepsis + not-mild ARDS): %d samples", len(cohort2))
-
-    # ------------------------------------------------------------------
-    # 5. Combine
-    # ------------------------------------------------------------------
-    combined = pd.concat([cohort1, cohort2], ignore_index=True)
-    logger.info(
-        "Combined filtered dataset: %d rows  (Cohort 1: %d, Cohort 2: %d)",
-        len(combined), len(cohort1), len(cohort2),
-    )
-    return combined
+from src.core.data_utils import filter_data, load_data
+from src.core.logging_utils import setup_logging
 
 
 def split_data(
@@ -247,7 +123,7 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    logger = setup_logging()
+    logger = setup_logging(save_results=False, script_name="preprocess")
 
     logger.info("Starting preprocess.py")
     logger.info(
@@ -255,7 +131,8 @@ def main() -> None:
         args.raw_path, args.processed_dir, args.test_size, args.random_state,
     )
 
-    combined = load_and_filter(args.raw_path, logger)
+    raw_data = load_data(args.raw_path, logger)
+    combined = filter_data(raw_data, logger)
     seen, unseen = split_data(combined, args.test_size, args.random_state, logger)
     save_outputs(
         combined, seen, unseen,

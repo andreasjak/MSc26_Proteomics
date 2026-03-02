@@ -21,71 +21,19 @@ sys.path.append(str(Path(__file__).resolve().parent.parent))
 import argparse
 import logging
 import time
-from datetime import datetime
 
 import numpy as np
 import pandas as pd
 from sklearn.feature_selection import mutual_info_classif
 from statsmodels.stats.multitest import multipletests
 
-from src.core.data_utils import get_protein_features
-
-
-# ---------------------------------------------------------------------------
-# Logging setup
-# ---------------------------------------------------------------------------
-
-def setup_logging(
-    save_results: bool, log_subdir: str, script_name: str
-) -> logging.Logger:
-    """
-    Configure logging:
-      - save_results=False → StreamHandler (terminal) only
-      - save_results=True  → FileHandler (file) only, no terminal output
-    Log path: logs/<log_subdir>/<script_name>_YYYYMMDD_HHMMSS.log
-    """
-    logger = logging.getLogger(script_name)
-    logger.setLevel(logging.INFO)
-
-    formatter = logging.Formatter(
-        fmt="%(asctime)s  %(levelname)s  %(message)s",
-        datefmt="%H:%M:%S",
-    )
-
-    if save_results:
-        log_dir = Path("logs") / log_subdir
-        log_dir.mkdir(parents=True, exist_ok=True)
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        log_path = log_dir / f"{script_name}_{timestamp}.log"
-        handler: logging.Handler = logging.FileHandler(log_path)
-    else:
-        handler = logging.StreamHandler()
-
-    handler.setLevel(logging.INFO)
-    handler.setFormatter(formatter)
-    logger.addHandler(handler)
-    return logger
+from src.core.data_utils import get_protein_features, load_data
+from src.core.logging_utils import setup_logging
 
 
 # ---------------------------------------------------------------------------
 # Pipeline stages
 # ---------------------------------------------------------------------------
-
-def load_data(
-    data_path: Path,
-    logger: logging.Logger,
-) -> pd.DataFrame:
-    """Load seen.csv and return the full DataFrame."""
-    logger.info("Loading data from %s", data_path)
-    data = pd.read_csv(data_path)
-    logger.info("Data shape: %s", data.shape)
-
-    n_ards = int((data["ards"] == 1).sum())
-    n_non = int((data["ards"] == 0).sum())
-    logger.info("Samples — ARDS: %d | non-ARDS: %d", n_ards, n_non)
-
-    return data
-
 
 def compute_mi(
     data: pd.DataFrame,
