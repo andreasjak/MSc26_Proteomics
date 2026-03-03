@@ -31,7 +31,7 @@ def interaction_information(X, Y=None, k=3):
         for size in range(1, n_features + 1):
             sign = (-1) ** (size + 1)
             for subset in combinations(range(n_features), size):
-                I += sign * np.maximum(ee.micd(X[:, subset], Y.reshape(-1, 1), k=k), 0)
+                I += sign * ee.micd(X[:, subset], Y.reshape(-1, 1), k=k)
 
     else: 
         if n_features < 2:
@@ -40,7 +40,7 @@ def interaction_information(X, Y=None, k=3):
         for size in range(1, n_features + 1):
             sign = (-1) ** (size - 1)
             for subset in combinations(range(n_features), size):
-                I += sign * np.maximum(ee.entropy(X[:, subset], k=k), 0)
+                I += sign * ee.entropy(X[:, subset], k=k)
     return I*np.log(2)
 
 def interaction_information_ccd(X1, X2, Y, k=3, method='npeet', IX1Y=None, IX2Y=None):
@@ -53,7 +53,7 @@ def interaction_information_ccd(X1, X2, Y, k=3, method='npeet', IX1Y=None, IX2Y=
         # Using NPEET
         idx = Y.ravel() == 1
         p = np.mean(idx)
-        I = np.maximum(ee.mi(X1, X2, k=k), 0) - p * np.maximum(ee.mi(X1[idx], X2[idx], k=k), 0) - (1 - p) * np.maximum(ee.mi(X1[~idx], X2[~idx], k=k), 0)
+        I = ee.mi(X1, X2, k=k) - p * ee.mi(X1[idx], X2[idx], k=k) - (1 - p) * ee.mi(X1[~idx], X2[~idx], k=k)
         return I*np.log(2)
     elif method == 'sklearn':
         # Using scikit-learn
@@ -65,11 +65,11 @@ def interaction_information_ccd(X1, X2, Y, k=3, method='npeet', IX1Y=None, IX2Y=
         return I
     elif method == 'npeet_2':
         # Using NPEET with conditional mutual information
-        I = np.maximum(ee.mi(X1, X2, k=k), 0) - np.maximum(ee.cmi(X1, X2, Y, k=k), 0)
+        I = ee.mi(X1, X2, k=k) - ee.cmi(X1, X2, Y, k=k)
         return I*np.log(2)
     elif method == 'npeet_3':
         # Using NPEET if I(X1;Y)=IX1Y and I(X2;Y)=IX2Y are both known
-        I = IX1Y + IX2Y - np.maximum(ee.micd(np.c_[X1, X2], Y.reshape(-1, 1), k=k), 0)*np.log(2)
+        I = IX1Y + IX2Y - ee.micd(np.c_[X1, X2], Y.reshape(-1, 1), k=k)*np.log(2)
         return I
     else:
         raise ValueError("Invalid method specified. Choose from 'npeet', 'sklearn', 'npeet_2', or 'npeet_3'.")
@@ -82,14 +82,14 @@ def interaction_information_ccc(X1, X2, X3, k=3, method='npeet', IX1X3=None, IX2
 
     if method == 'npeet':
         # Using NPEET with conditional mutual information
-        I = np.maximum(ee.mi(X1, X2, k=k), 0) - np.maximum(ee.cmi(X1, X2, X3, k=k), 0)
+        I = ee.mi(X1, X2, k=k) - ee.cmi(X1, X2, X3, k=k)
         return I*np.log(2)
     elif method == 'sklearn':
         # Using scikit-learn
         raise NotImplementedError("Scikit-learn does not support conditional mutual information for continuous variables.")
     elif method == 'npeet_2':
         # Using NPEET if I(X1;Y)=IX1Y and I(X2;Y)=IX2Y are both known
-        I = IX1X3 + IX2X3 - np.maximum(ee.mi(np.c_[X1, X2], X3, k=k), 0)*np.log(2)
+        I = IX1X3 + IX2X3 - ee.mi(np.c_[X1, X2], X3, k=k)*np.log(2)
         return I
     else:
         raise ValueError("Invalid method specified. Choose from 'npeet', 'npeet_2'.")
@@ -107,7 +107,7 @@ def mutual_information_cd(X, Y, k=3, method='npeet'):
         MI = np.zeros(n_features)
         for i in range(n_features):
             MI[i] = ee.micd(X[:, i].reshape(-1, 1), Y, k=k)
-        return np.maximum(MI, 0)*np.log(2)
+        return MI*np.log(2)
     elif method == 'sklearn':
         return mutual_info_classif(X, Y.ravel(), n_neighbors=k)
     else:
@@ -123,7 +123,7 @@ def mutual_information_cc(X, X2, k=3, method='npeet'):
         MI = np.zeros(n_features)
         for i in range(n_features):
             MI[i] = ee.mi(X[:, i].reshape(-1, 1), X2, k=k)
-        return np.maximum(MI, 0)*np.log(2)
+        return MI*np.log(2)
     elif method == 'sklearn':
         return mutual_info_regression(X, X2.ravel(), n_neighbors=k)
     else:
@@ -137,7 +137,7 @@ def joint_mutual_information_cd(X, Y, k=3, method='npeet'):
     Y = np.asarray(Y).reshape(-1, 1)
 
     if method == 'npeet':
-        return np.maximum(ee.micd(X, Y, k=k), 0)*np.log(2)
+        return ee.micd(X, Y, k=k)*np.log(2)
     elif method == 'sklearn':
         raise NotImplementedError("Scikit-learn does not support joint mutual information for continuous variables.") 
     else:
@@ -149,7 +149,7 @@ def joint_mutual_information_cc(X, X2, k=3, method='npeet'):
     X2 = np.asarray(X2).reshape(-1, 1)
 
     if method == 'npeet':
-        return np.maximum(ee.mi(X, X2, k=k), 0)*np.log(2)
+        return ee.mi(X, X2, k=k)*np.log(2)
     elif method == 'sklearn':
         raise NotImplementedError("Scikit-learn does not support joint mutual information for continuous variables.")   
     else:
