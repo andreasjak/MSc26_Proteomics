@@ -30,6 +30,7 @@ from sklearn.feature_selection import mutual_info_classif, mutual_info_regressio
 def feature_selection_algo(X, y, n_features, n_neighbors, mi_uni_scores):
     n_total = X.shape[1]
     selected_features = set()
+    seleceted_features_orderd = np.array([])
     remaining_features = set(range(n_total))
     ii_cache = {}
 
@@ -52,6 +53,7 @@ def feature_selection_algo(X, y, n_features, n_neighbors, mi_uni_scores):
     # Select first feature, then batch-compute its II against all others
     first_feature = np.argmax(mi_uni_scores)
     selected_features.add(first_feature)
+    seleceted_features_orderd = np.append(seleceted_features_orderd, first_feature)
     remaining_features.remove(first_feature)
     batch_cache_ii(first_feature, remaining_features)
 
@@ -74,8 +76,9 @@ def feature_selection_algo(X, y, n_features, n_neighbors, mi_uni_scores):
         remaining_features.remove(best_feature)
         # Batch-compute II between new selection and all remaining
         batch_cache_ii(best_feature, remaining_features)
+        seleceted_features_orderd = np.append(seleceted_features_orderd, best_feature)
 
-    return list(selected_features)
+    return seleceted_features_orderd.astype(int).tolist()
 
 def feature_selection_algo_old(
     X,
