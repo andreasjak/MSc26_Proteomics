@@ -17,6 +17,11 @@ logging_utils
     Shared logging configuration (terminal or file-based).
 plot_utils
     Correlation matrix computation and hierarchically-clustered heatmap plotting.
+simulation_utils
+    Gaussian-copula ARDS proteomics simulator (SimulationConfig,
+    ARDSProteinSimulator).
+    Import directly: ``from src.core.simulation_utils import ...``
+    (not auto-imported here to avoid mandatory scipy dependency).
 """
 
 from .data_utils import (
