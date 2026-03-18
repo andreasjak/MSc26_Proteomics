@@ -191,7 +191,7 @@ def default_param_grid(grid_size: str = "small") -> dict:
     """Reasonable RF grids for p >> n proteomics."""
     if grid_size == "small":
         return {
-            "n_estimators": [300, 600],
+            "n_estimators": [300, 600, 2000],
             "max_depth": [None, 20],
             "min_samples_split": [2, 10],
             "min_samples_leaf": [1, 3],
@@ -199,10 +199,10 @@ def default_param_grid(grid_size: str = "small") -> dict:
         }
     if grid_size == "medium":
         return {
-            "n_estimators": [300, 600],
+            "n_estimators": [300, 600, 1000, 2000],
             "max_depth": [None, 10, 20],
             "min_samples_split": [2, 10],
-            "min_samples_leaf": [1, 3, 5],
+            "min_samples_leaf": [1, 3, 5, 8, 15],
             "max_features": ["sqrt", 0.1, 0.2],
         }
     raise ValueError("grid_size must be 'small' or 'medium'")
@@ -381,7 +381,7 @@ def main() -> None:
     parser.add_argument(
         "--scoring-metric",
         type=str,
-        default="pr_auc",
+        default="f1_ards",
         choices=[
             "pr_auc",
             "roc_auc",
