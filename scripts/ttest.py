@@ -102,6 +102,7 @@ def run_ttests(data: pd.DataFrame, logger: logging.Logger) -> pd.DataFrame:
             rows.append({
                 "Protein": prot,
                 "MeanDiff": mean_diff,
+                "absMeanDiff": abs(mean_diff),
                 "pval": pval,
                 "n_ards": len(g1_clean),
                 "n_non_ards": len(g0_clean),
@@ -128,7 +129,7 @@ def correct_pvalues(
     _, adj_p, _, _ = multipletests(results["pval"].values, method=mt_method)
     results = results.copy()
     results["ADJ_P"] = adj_p
-    results = results.sort_values(["ADJ_P", "pval"], ascending=[True, False]).reset_index(drop=True)
+    results = results.sort_values(["ADJ_P", "absMeanDiff"], ascending=[True, False]).reset_index(drop=True)
 
     n_sig = int((results["ADJ_P"] < alpha).sum())
     logger.info(
@@ -292,7 +293,13 @@ def main() -> None:
         "--k",
         type=int,
         default=20,
-        help="Number of top proteins to save as selected features (default: 10).",
+        help="Number of top proteins to save as selected features (default: 20).",
+    )
+    parser.add_argument(
+        "--mean-diff-threshold",
+        type=float,
+        default=0.0,
+        help="Minimum absolute mean difference to consider a protein for labeling (default: 0.0).",
     )
     args = parser.parse_args()
 
@@ -334,7 +341,22 @@ def main() -> None:
         results.to_csv(ttest_out, index=False)
         logger.info("Saved t-test results to: %s", ttest_out)
 
-        top_k = results.head(args.k)[["Protein"]].rename(columns={"Protein": "protein"})
+        top_proteins = results[results["MeanDiff"].abs() >= args.mean_diff_threshold].drop(
+            columns=["n_non_ards", "n_ards", "pval"]
+        ).copy()
+
+        if len(top_proteins) < args.k:
+            logger.warning(
+                "Only %d proteins pass mean_diff_threshold=%.3f, fewer than k=%d",
+                len(top_proteins), args.mean_diff_threshold, args.k
+            )
+
+        for thresh in [0.05, 0.01, 0.001]:
+            top_proteins[f"sig_{thresh}"] = top_proteins["ADJ_P"] < thresh
+
+        top_k = top_proteins.head(args.k).rename(columns={"Protein": "protein"})
+        top_k = top_k.drop(columns=["absMeanDiff"])
+        #top_k = results.head(args.k)[["Protein"]].rename(columns={"Protein": "protein"})
         features_out = results_dir / f"selected_features_k{args.k}.csv"
         top_k.to_csv(features_out, index=False)
         logger.info("Saved top-%d features to: %s", args.k, features_out)
