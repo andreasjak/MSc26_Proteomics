@@ -80,70 +80,6 @@ def compute_mi(
 
     return mi_results, X.values, y
 
-def permutation_test(
-    X: np.ndarray,
-    y: np.ndarray,
-    mi_results: pd.DataFrame,
-    n_perm: int,
-    n_neighbors: int,
-    random_state: int,
-    logger: logging.Logger,
-) -> pd.DataFrame:
-    """
-    Permutation test for MI significance.
-
-    Shuffles the label vector ``n_perm`` times, re-computes MI each time,
-    and derives empirical p-values as (count + 1) / (n_perm + 1).
-
-    Returns a copy of *mi_results* with an added ``p_perm`` column.
-    """
-    rng = np.random.default_rng(random_state)
-    mi_obs = mi_results["MI"].values
-    prot_order = mi_results["Protein"].tolist()
-
-    # Reorder X columns to match mi_results order.
-    # X was built from protein_cols in compute_mi; here we need the same
-    # column mapping.  Since mi_results is just a sort of those columns,
-    # and X is a plain ndarray, we need to track indices.
-    # Build a column-index lookup from the original protein_cols order.
-    # protein_cols in mi_results may be re-sorted; X columns follow the
-    # original get_protein_features order.  Safest: just reuse X as-is
-    # and reorder mi_obs to match X column order.
-    #
-    # Actually, mi_obs is already aligned to mi_results["Protein"], but X
-    # columns follow get_protein_features order.  Re-sort mi_obs to X order.
-    # — Simpler approach: pass X already ordered to match mi_results.
-    # The caller (main) can handle this.  For now we assume X columns and
-    # mi_results["Protein"] are in corresponding order (both sorted desc MI).
-    # We re-sort X columns at the call site.
-
-    perm_counts = np.zeros(len(prot_order), dtype=int)
-
-    logger.info("Running %d permutations …", n_perm)
-    t0 = time.time()
-    for b in range(n_perm):
-        if n_perm >= 10 and (b + 1) % (n_perm // 10) == 0:
-            logger.info(
-                "  Permutation %d/%d (%d%%) — elapsed %.1f s",
-                b + 1, n_perm, int((b + 1) / n_perm * 100), time.time() - t0,
-            )
-        y_perm = rng.permutation(y)
-        mi_perm = mutual_info_classif(
-            X,
-            y_perm,
-            discrete_features=False,
-            n_neighbors=n_neighbors,
-            random_state=random_state,
-        )
-        perm_counts += (mi_perm >= mi_obs)
-
-    p_perm = (perm_counts + 1) / (n_perm + 1)
-
-    mi_results = mi_results.copy()
-    mi_results["p_perm"] = p_perm
-    return mi_results
-
-
 def adaptive_permutation_test(
     X: np.ndarray,
     y: np.ndarray,
@@ -218,7 +154,7 @@ def adaptive_permutation_test(
             y_perm,
             discrete_features=False,
             n_neighbors=n_neighbors,
-            random_state=random_state,
+            random_state=random_state + b + 1,
         )
 
         # Update counts for currently active proteins
@@ -369,18 +305,6 @@ def main() -> None:
              "(default: None = test all proteins).",
     )
     parser.add_argument(
-        "--n-perm",
-        type=int,
-        default=1000,
-        help="Number of permutations (fixed mode, default: 1000). "
-             "Ignored when --adaptive is set.",
-    )
-    parser.add_argument(
-        "--adaptive",
-        action="store_true",
-        help="Enable adaptive permutation testing with early stopping.",
-    )
-    parser.add_argument(
         "--min-perm",
         type=int,
         default=200,
@@ -397,7 +321,7 @@ def main() -> None:
         type=float,
         default=None,
         help="Significance threshold for adaptive early stopping "
-             "(default: same as --alpha).",
+             "(default: --alpha / --n_proteins).",
     )
     parser.add_argument(
         "--n-neighbors",
@@ -415,7 +339,13 @@ def main() -> None:
         "--k",
         type=int,
         default=20,
-        help="Number of top proteins to save as selected features (default: 10).",
+        help="Number of top proteins to save as selected features (default: 20).",
+    )
+    parser.add_argument(
+        "--mi-threshold",
+        type=float,
+        default=0.0,
+        help="Minimum MI threshold for selecting proteins (default: 0.0).",
     )
     args = parser.parse_args()
 
@@ -423,12 +353,12 @@ def main() -> None:
 
     logger.info("Starting mi_uni_tests.py")
     logger.info(
-        "Args: data_path=%s  correction=%s  alpha=%s  n_perm=%d  "
+        "Args: data_path=%s  correction=%s  alpha=%s  "
         "n_neighbors=%d  random_state=%d  k=%d  save_results=%s  "
-        "n_proteins=%s  adaptive=%s  min_perm=%d  max_perm=%d  alpha_stop=%s",
-        args.data_path, args.correction_method, args.alpha, args.n_perm,
+        "n_proteins=%s  min_perm=%d  max_perm=%d  alpha_stop=%s",
+        args.data_path, args.correction_method, args.alpha,
         args.n_neighbors, args.random_state, args.k, args.save_results,
-        args.n_proteins, args.adaptive, args.min_perm, args.max_perm,
+        args.n_proteins, args.min_perm, args.max_perm,
         args.alpha_stop,
     )
 
@@ -452,6 +382,7 @@ def main() -> None:
     mi_results_full = mi_results  # keep full list (all proteins with MI)
     if args.n_proteins is not None:
         n_test = min(args.n_proteins, len(mi_results))
+        #n_test = len(mi_results)
         logger.info(
             "Restricting permutation test to top %d / %d proteins by MI.",
             n_test, len(mi_results),
@@ -463,24 +394,20 @@ def main() -> None:
         X_test = X_perm
 
     # Step 3: Permutation test
-    if args.adaptive:
-        # Default alpha_stop to alpha / (nbr of proteins) if not set
-        if args.alpha_stop is None:
-            if args.n_proteins is not None:
-                args.alpha_stop = args.alpha / args.n_proteins  
-            else:
-                args.alpha_stop = args.alpha / len(mi_results)
+    # Default alpha_stop to alpha / (nbr of proteins) if not set
+    if args.alpha_stop is None:
+        if args.n_proteins is not None:
+            n_test = min(args.n_proteins, len(mi_results))
+            #n_test = len(mi_results)
+            args.alpha_stop = args.alpha / n_test
+        else:
+            args.alpha_stop = args.alpha / len(mi_results)
 
-        mi_results_test = adaptive_permutation_test(
-            X_test, y, mi_results_test,
-            args.min_perm, args.max_perm, args.alpha_stop,
-            args.n_neighbors, args.random_state, logger,
-        )
-    else:
-        mi_results_test = permutation_test(
-            X_test, y, mi_results_test,
-            args.n_perm, args.n_neighbors, args.random_state, logger,
-        )
+    mi_results_test = adaptive_permutation_test(
+        X_test, y, mi_results_test,
+        args.min_perm, args.max_perm, args.alpha_stop,
+        args.n_neighbors, args.random_state, logger,
+    )
 
     # Merge untested proteins back (they get NaN p-values)
     if args.n_proteins is not None:
@@ -508,10 +435,20 @@ def main() -> None:
         mi_results.to_csv(out_path, index=False)
         logger.info("Saved MI results to: %s", out_path)
 
-        top_k = (
-            mi_results.head(args.k)[["Protein"]]
-            .rename(columns={"Protein": "protein"})
-        )
+        top_proteins = mi_results[mi_results["MI"] >= args.mi_threshold].drop(
+            columns=["p_perm", "n_perm_done"]
+        ).copy()
+
+        if len(top_proteins) < args.k:
+            logger.warning(
+                "Only %d proteins pass mi_threshold=%.3f, fewer than k=%d",
+                len(top_proteins), args.mi_threshold, args.k
+            )
+
+        for thresh in [0.05, 0.01, 0.001]:
+            top_proteins[f"sig_{thresh}"] = top_proteins["ADJ_P"] < thresh
+
+        top_k = top_proteins.head(args.k).rename(columns={"Protein": "protein"})
         features_out = results_dir / f"selected_features_k{args.k}.csv"
         top_k.to_csv(features_out, index=False)
         logger.info("Saved top-%d features to: %s", args.k, features_out)
