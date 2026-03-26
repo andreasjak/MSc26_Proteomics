@@ -3,18 +3,23 @@ channels:
   - conda-forge
 dependencies:
   - python=3.12
-  - numpy
   - pandas
+  - numpy
   - scipy
   - matplotlib
   - statsmodels
+  - adjusttext
+  - joblib
   - scikit-learn
   - imbalanced-learn
-  - seaborn
-  - joblib
-  - adjusttext
-  - xgboost
+  - py-xgboost
   - infomeasure
+  - seaborn
+  - networkx
+  - torchvision
+  - torchaudio
+  - pytorch
+  - umap-learn
   - pip
   - git
   - pip:
