@@ -27,8 +27,8 @@ from src.core.logging_utils import setup_logging
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
-LOG_SUBDIR = "protein_clustering_demo"
-N_ITER = 200
+LOG_SUBDIR = "protein_sub_selection"
+N_ITER = 1000
 
 # ---------------------------------------------------------------------------
 # Utilities
@@ -75,7 +75,7 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     ## Setup
-    logger = setup_logging(args.save_results, LOG_SUBDIR, "pipeline")
+    logger = setup_logging(args.save_results, LOG_SUBDIR, "pipeline") # CHANGE pipeline name
 
     ## Load filtered data
     df = load_data("data/processed/filtered_data.csv", logger)
@@ -119,6 +119,7 @@ if __name__ == "__main__":
         pd.DataFrame(significant_proteins).to_csv(results_dir / f"significant_proteins_{args.subsample_size}.csv", index=False)
         pd.DataFrame(p_values).to_csv(results_dir / f"p_values_{args.subsample_size}.csv", index=False)
 
+'''
     #number of proteins selected in each iteration
     n_selected_proteins = [sum(significant_proteins[prot][i] for prot in proteins) for i in range(N_ITER)]
     
@@ -211,3 +212,4 @@ if __name__ == "__main__":
     plt.grid(True, alpha=0.3)
     
     plt.show()
+'''
