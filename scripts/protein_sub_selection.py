@@ -5,6 +5,11 @@ import sys
 from pathlib import Path
 sys.path.append(str(Path(__file__).resolve().parent.parent))
 
+import argparse
+import logging
+import re
+import time
+
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
@@ -23,8 +28,7 @@ from src.core.logging_utils import setup_logging
 # Constants
 # ---------------------------------------------------------------------------
 LOG_SUBDIR = "protein_clustering_demo"
-SAVE_RESULTS = False
-N_ITER = 1000
+N_ITER = 200
 
 # ---------------------------------------------------------------------------
 # Utilities
@@ -54,8 +58,24 @@ def run_ttest(X, y, p_threshold=0.05, proteins=None):
 # Main
 # ---------------------------------------------------------------------------
 if __name__ == "__main__":
+    parser = argparse.ArgumentParser(
+        description="Subsample data and do protein selection."
+    )
+    parser.add_argument(
+        "--subsample_size",
+        type=float,
+        default=0.8,
+        help="Proportion of samples to include in each subsample (default: 0.8).",
+    )
+    parser.add_argument(
+        "--save-results",
+        action="store_true",
+        help="Save outputs to disk and log to file; otherwise log to terminal and show plot interactively.",
+    )
+    args = parser.parse_args()
+
     ## Setup
-    logger = setup_logging(SAVE_RESULTS, LOG_SUBDIR, "pipeline")
+    logger = setup_logging(args.save_results, LOG_SUBDIR, "pipeline")
 
     ## Load filtered data
     df = load_data("data/processed/filtered_data.csv", logger)
@@ -74,24 +94,30 @@ if __name__ == "__main__":
     significant_proteins = {prot: [] for prot in proteins}
     p_values = {prot: [] for prot in proteins}
 
-    rng = np.random.default_rng(seed=42)
     for i in tqdm(range(N_ITER)):
         # Bootstrap sampling or subsampling with replacement
         #boot_idx = np.random.choice(n_samples, size=n_samples, replace=True)
 
         ## subsample without replacement
-        boot_idx = np.random.choice(n_samples, size=int(n_samples*0.8), replace=False) 
-        
-        
-        X_boot = X.iloc[boot_idx]
-        y_boot = y.iloc[boot_idx]
+        rng = np.random.default_rng(seed=42+i)
+        sample_idx = np.random.choice(n_samples, size=int(n_samples*args.subsample_size), replace=False) 
+                
+        X_sample = X.iloc[sample_idx]
+        y_sample = y.iloc[sample_idx]
 
         # Run t-tests and get selected proteins
-        reject, adj_p_vals, sig_proteins = run_ttest(X_boot, y_boot, p_threshold=0.05, proteins=proteins)
+        reject, adj_p_vals, sig_proteins = run_ttest(X_sample, y_sample, p_threshold=0.05, proteins=proteins)
 
         for prot in significant_proteins.keys():
             significant_proteins[prot].append(prot in sig_proteins)
             p_values[prot].append(adj_p_vals[proteins.index(prot)])
+
+    # Save results
+    if args.save_results:
+        results_dir = Path("results") / "protein_sub_selection"
+        results_dir.mkdir(parents=True, exist_ok=True)
+        pd.DataFrame(significant_proteins).to_csv(results_dir / f"significant_proteins_{args.subsample_size}.csv", index=False)
+        pd.DataFrame(p_values).to_csv(results_dir / f"p_values_{args.subsample_size}.csv", index=False)
 
     #number of proteins selected in each iteration
     n_selected_proteins = [sum(significant_proteins[prot][i] for prot in proteins) for i in range(N_ITER)]
@@ -113,7 +139,7 @@ if __name__ == "__main__":
 
     
     # Reduce dimension by removing proteins that were never significant
-    proteins_to_keep = [prot for prot in proteins if any(significant_proteins[prot])]
+    proteins_to_keep = [prot for prot in proteins if np.mean(significant_proteins[prot]) > 0]  # Keep proteins that were significant in at least one iteration
     print(f"Number of proteins to keep (significant in at least one iteration): {len(proteins_to_keep)}")
 
     idx_keep = [proteins.index(prot) for prot in proteins_to_keep]
@@ -145,8 +171,8 @@ if __name__ == "__main__":
 
     # 1. UMAP on Significance (Binary 0/1)
     # n_neighbors: controls local vs global structure (default 15)
-    # metric: 'jaccard' is excellent for binary data, 'euclidean' also works
-    reducer_sig = umap.UMAP(n_neighbors=15, min_dist=0.1, metric='euclidean', random_state=42)
+    # metric: 'jaccard' or 'cosine
+    reducer_sig = umap.UMAP(n_neighbors=15, min_dist=0.1, metric='cosine', random_state=42)
     embedding_sig = reducer_sig.fit_transform(X_sig)
 
     plt.figure(figsize=(10, 8))
@@ -166,7 +192,7 @@ if __name__ == "__main__":
     #plt.show()
 
     # 2. UMAP on P-values
-    reducer_pval = umap.UMAP(n_neighbors=15, min_dist=0.1, random_state=42)
+    reducer_pval = umap.UMAP(n_neighbors=15, min_dist=0.1, metric='cosine', random_state=42)
     embedding_pval = reducer_pval.fit_transform(X_pval)
 
     plt.figure(figsize=(10, 8))
@@ -183,8 +209,5 @@ if __name__ == "__main__":
     plt.xlabel('UMAP 1')
     plt.ylabel('UMAP 2')
     plt.grid(True, alpha=0.3)
-    
-    
-    
     
     plt.show()
