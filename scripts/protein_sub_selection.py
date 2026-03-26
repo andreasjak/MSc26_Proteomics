@@ -18,7 +18,7 @@ import umap.umap_ as umap
 
 from scipy import stats
 from statsmodels.stats.multitest import multipletests
-from tqdm import tqdm
+#from tqdm import tqdm
 
 from styles.colors import get_colors
 from src.core.data_utils import load_annotation, load_data
@@ -28,7 +28,7 @@ from src.core.logging_utils import setup_logging
 # Constants
 # ---------------------------------------------------------------------------
 LOG_SUBDIR = "protein_sub_selection"
-N_ITER = 1000
+N_ITER = 2500
 
 # ---------------------------------------------------------------------------
 # Utilities
@@ -75,7 +75,7 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     ## Setup
-    logger = setup_logging(args.save_results, LOG_SUBDIR, "pipeline") # CHANGE pipeline name
+    logger = setup_logging(args.save_results, LOG_SUBDIR, "protein_sub_selection") 
 
     ## Load filtered data
     df = load_data("data/processed/filtered_data.csv", logger)
@@ -94,7 +94,9 @@ if __name__ == "__main__":
     significant_proteins = {prot: [] for prot in proteins}
     p_values = {prot: [] for prot in proteins}
 
-    for i in tqdm(range(N_ITER)):
+    for i in range(N_ITER):
+        if (i+1) % 100 == 0:
+            logger.info(f"Iteration {i+1}/{N_ITER}")
         # Bootstrap sampling or subsampling with replacement
         #boot_idx = np.random.choice(n_samples, size=n_samples, replace=True)
 
@@ -118,98 +120,4 @@ if __name__ == "__main__":
         results_dir.mkdir(parents=True, exist_ok=True)
         pd.DataFrame(significant_proteins).to_csv(results_dir / f"significant_proteins_{args.subsample_size}.csv", index=False)
         pd.DataFrame(p_values).to_csv(results_dir / f"p_values_{args.subsample_size}.csv", index=False)
-
-'''
-    #number of proteins selected in each iteration
-    n_selected_proteins = [sum(significant_proteins[prot][i] for prot in proteins) for i in range(N_ITER)]
-    
-    # print as df
-    df_results = pd.DataFrame({
-        "n_selected_proteins": n_selected_proteins
-    })
-    print(df_results.head())
-
-    # figure histogram
-    plt.figure(figsize=(10, 6))
-    plt.hist(n_selected_proteins, bins=50, edgecolor='black')
-    plt.title("Distribution of Number of Significant Proteins Across Iterations")
-    plt.xlabel("Number of Significant Proteins")
-    plt.ylabel("Frequency")
-    plt.grid(axis='y', alpha=0.75)
-    #plt.show()
-
-    
-    # Reduce dimension by removing proteins that were never significant
-    proteins_to_keep = [prot for prot in proteins if np.mean(significant_proteins[prot]) > 0]  # Keep proteins that were significant in at least one iteration
-    print(f"Number of proteins to keep (significant in at least one iteration): {len(proteins_to_keep)}")
-
-    idx_keep = [proteins.index(prot) for prot in proteins_to_keep]
-    X_keep = X.iloc[:, idx_keep]
-
-    significant_proteins_keep = {prot: significant_proteins[prot] for prot in proteins_to_keep}
-    p_values_keep = {prot: p_values[prot] for prot in proteins_to_keep}
-
-
-    # ---------------------------------------------------------------------------
-    # UMAP Clustering of Iterations
-    # ---------------------------------------------------------------------------
-    print("\nRunning UMAP on iterations...")
-
-    # DataFrames from dictionaries (Rows: Iterations, Cols: Proteins)
-    df_sig = pd.DataFrame(significant_proteins_keep)
-    df_pval = pd.DataFrame(p_values_keep)
-
-    # Calculate selection count to color the points (how "rich" the iteration was)
-    n_selected_in_kept = df_sig.sum(axis=1).values
-
-    # PREPARE DATA FOR UMAP
-    # Samples (rows) are Iterations
-    # Features (cols) are Proteins (their significance status or p-value)
-    # No transpose needed
-    X_sig = df_sig.values        
-    # Fill NA in p-values with 1.0 (non-significant) to avoid UMAP errors
-    X_pval = df_pval.fillna(1.0).values      
-
-    # 1. UMAP on Significance (Binary 0/1)
-    # n_neighbors: controls local vs global structure (default 15)
-    # metric: 'jaccard' or 'cosine
-    reducer_sig = umap.UMAP(n_neighbors=15, min_dist=0.1, metric='cosine', random_state=42)
-    embedding_sig = reducer_sig.fit_transform(X_sig)
-
-    plt.figure(figsize=(10, 8))
-    plt.scatter(
-        embedding_sig[:, 0], 
-        embedding_sig[:, 1], 
-        c=n_selected_in_kept, 
-        cmap='viridis', 
-        s=50, 
-        alpha=0.8
-    )
-    plt.colorbar(label='Number of Selected Proteins (among kept)')
-    plt.title('UMAP of Iterations based on Selected Proteins (Binary)')
-    plt.xlabel('UMAP 1')
-    plt.ylabel('UMAP 2')
-    plt.grid(True, alpha=0.3)
-    #plt.show()
-
-    # 2. UMAP on P-values
-    reducer_pval = umap.UMAP(n_neighbors=15, min_dist=0.1, metric='cosine', random_state=42)
-    embedding_pval = reducer_pval.fit_transform(X_pval)
-
-    plt.figure(figsize=(10, 8))
-    plt.scatter(
-        embedding_pval[:, 0], 
-        embedding_pval[:, 1], 
-        c=n_selected_in_kept, 
-        cmap='viridis', 
-        s=50, 
-        alpha=0.8
-    )
-    plt.colorbar(label='Number of Selected Proteins (among kept)')
-    plt.title('UMAP of Iterations based on P-Values')
-    plt.xlabel('UMAP 1')
-    plt.ylabel('UMAP 2')
-    plt.grid(True, alpha=0.3)
-    
-    plt.show()
-'''
+        logger.info(f"Results saved to {results_dir}")
