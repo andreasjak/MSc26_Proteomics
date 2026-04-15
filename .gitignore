@@ -240,3 +240,6 @@ data/
 *.gz
 *.7z
 
+# Tex files and texfiles folder
+*.tex
+texfiles/
