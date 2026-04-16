@@ -243,3 +243,6 @@ data/
 # Tex files and texfiles folder
 *.tex
 texfiles/
+
+# Claude markdown file
+CLAUDE.md
