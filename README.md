@@ -1,71 +1,55 @@
 # MSc26 Proteomics
 
-Research project investigating proteomics data analysis
+Pipeline project for identifying non-linear protein regulation and higher-order interactions in ARDS from SomaScan proteomics data.
 
-## Project Structure
+## Setup
 
-```
-MSc26_Proteomics/
-├── logs/                          # Logs from runs (not tracked in git)
-├── results/                       # Results (not tracked in git)
-├── data/                          # Data files (not tracked in git)
-│   ├── raw/                       # Raw, unprocessed data
-│   └── processed/                 # Processed data from preprocessing scripts
-├── notebooks/                     # Jupyter notebooks for exploration and analysis
-├── scripts/                       # Standalone scripts and pipelines
-├── src/                           # Source code and reusable modules
-│   ├── styles/
-│   └── core/
-├── tests/                         # Unit tests
-├── requirements.txt               # Python dependencies
-└── README.md                      # This file
-```
-
-## Running scripts
-
-- All scripts now use **CLI arguments** (`argparse`) only.
-- Open a terminal in the project root (`MSc26_Proteomics`) and run commands from there.
-
-### General command format
-
-```powershell
-python .\scripts\<script_name>.py --arg1 value1 --arg2 value2
-```
-
-### Example
-
-```powershell
-python .\scripts\ttest.py --data-path .\data\processed\seen.csv --save-results --k 25
-```
-
-This example runs `ttest.py` on `seen.csv`, saves outputs (instead of interactive plotting), and writes a top-25 feature file (`selected_features_k25.csv`) along with the t-test results.
-
-### Help with scripts
-For help, discription and usage of script run:
-
-```powershell
-python .\scripts\<script_name>.py -h
-```
-or 
-```powershell
-python .\scripts\<script_name>.py --help
-```
-
-## Environment setup
-### Create the environment
-From the project root (where `environment.yml` is located):
+Create and activate the Conda environment from the repository root:
 
 ```bash
 conda env create -f environment.yml
-```
-
-### Activate the environment
-```bash
 conda activate proteomicsEnv
 ```
 
-### Update the environment 
-If `environment.yml` changes:
+If dependencies change:
+
 ```bash
 conda env update -f environment.yml --prune
+```
+
+## Stage 0 Scaffold
+
+This repository follows the staged implementation plan in `IMPLEMENTATION_GUIDE.md`.
+Stage 0 establishes the project scaffold used by later stages:
+
+```text
+src/
+	config.py
+	data_loading.py
+	splits.py
+	selection/
+		__init__.py
+		base.py
+		ttest.py
+		random.py
+	classifiers.py
+	enrichment.py
+	simulation.py
+	metrics.py
+	utils.py
+
+scripts/
+	00_prepare_data.py
+	01_generate_splits.py
+	02_run_selection.py
+	03_run_classifiers.py
+	04_run_enrichment.py
+	05_run_simulation.py
+	06_aggregate_results.py
+```
+
+Run all scripts from the repository root:
+
+```bash
+python ./scripts/<script_name>.py -h
 ```

@@ -246,3 +246,12 @@ texfiles/
 
 # Claude markdown file
 CLAUDE.md
+
+# Stage 0 scaffold requirements
+data/raw/
+data/processed/
+results/
+__pycache__/
+.ipynb_checkpoints/
+*.pkl
+*.parquet
