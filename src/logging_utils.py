@@ -24,10 +24,10 @@ def setup_logging(
     ----------
     save_results : bool, optional
         When ``False`` (default), log to the terminal via a
-        ``StreamHandler``.  When ``True``, log to a timestamped file
+        ``StreamHandler``. When ``True``, log to a timestamped file
         under ``logs/<log_subdir>/`` and suppress terminal output.
     log_subdir : str, optional
-        Subdirectory under ``logs/`` for the log file.  Only used when
+        Subdirectory under ``logs/`` for the log file. Only used when
         *save_results* is ``True``.
     script_name : str, optional
         Name used for ``logging.getLogger`` **and** as the log-file
