@@ -160,67 +160,91 @@ class SelectionMethod(ABC):
     name: str  # unique identifier, used in paths and logs
 
     @abstractmethod
-    def select(self, X_train: np.ndarray, y_train: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
-        """Return (ranked_indices, scores) where ranked_indices[0] is most important.
-        scores is aligned with ranked_indices, same length.
-        Length equals the number of proteins the method considers selected at its native cutoff.
-        For ranking-only methods (no native cutoff), return all proteins ranked.
+    def select(self, X_train: np.ndarray, y_train: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+        """Return (ranked_indices, scores, significant) for ALL proteins.
+        - ranked_indices: array of protein indices, sorted most important first. Length = n_proteins.
+        - scores: array aligned with ranked_indices (e.g. q-values, MI values). Length = n_proteins.
+        - significant: boolean array aligned with ranked_indices. True if the protein passes
+          the method's native significance threshold. For methods with no native cutoff
+          (e.g. random), set all to False or define a reasonable convention.
         """
         pass
 ```
 
 **File:** `src/selection/ttest.py`
 
-- Welch's t-test per protein, Benjamini-Hochberg FDR correction at q < 0.05.
-- Return proteins with q < 0.05, ranked by ascending q-value. Also return the q-values as scores.
-- If no protein passes FDR, return empty arrays.
+- Welch's t-test per protein, Benjamini-Hochberg FDR correction.
+- Return ALL proteins ranked by ascending q-value (most significant first).
+- Scores are q-values.
+- `significant[i] = True` if `q_value[i] < 0.05`.
 
 **File:** `src/selection/random.py`
 
-- Return a random subset of proteins, size specified by constructor argument (default: match median of other methods; for initial runs, set to 30).
+- Return ALL proteins in random order.
 - Scores are uniform random in [0, 1].
-- Use the per-split seed so different splits give different random selections, but a given split is reproducible.
+- `significant[:m] = True` for the top m proteins, where m is a constructor argument (default 30). This defines the method's "native cutoff" for comparison purposes.
+- Use the per-split seed so different splits give different orderings, but a given split is reproducible.
 
 **File:** `scripts/02_run_selection.py`
 
 - Args: `--method <name>`, optional `--n-splits <int>` to override K (for expensive methods).
 - Loads cohort + splits.
-- For each split: extract X_train, y_train, run method, save (ranked_indices, scores) for that split.
-- Output: `results/selection/<method>/selections.parquet` with columns `[split_id, rank, protein_idx, protein_id, score]`. Long format, one row per (split, protein) for every protein the method selected.
+- For each split: extract X_train, y_train, run method, save full ranking.
+- Output: `results/selection/<method>/selections.parquet` with columns `[split_id, rank, protein_idx, protein_id, score, significant]`. Long format, one row per (split, protein) for ALL proteins (~11,000 × K rows).
 - Output: `results/selection/<method>/meta.json` with method name, n_splits, timing, any method-specific parameters.
-- Logs: number of proteins selected per split (min, median, max), total runtime.
+- Logs: number of significant proteins per split (min, median, max), total runtime.
 
 **Method registry:** in `scripts/02_run_selection.py`, map `--method` string to class via a dict. Adding a new method means importing it and adding one line to the registry.
 
-**Done when:** running `python scripts/02_run_selection.py --method ttest` produces a valid selections.parquet with >0 rows for most splits.
+**File size note:** ~11,000 proteins × 50 splits = 550,000 rows. As parquet with 6 columns this is ~20 MB. Acceptable.
+
+**Done when:** running `python scripts/02_run_selection.py --method ttest` produces a valid `selections.parquet` with exactly `n_proteins × n_splits` rows.
 
 ## Stage 5: Stability computation
 
-**Goal:** compute selection frequency per protein, derive stable sets.
+**Goal:** compute selection frequency per protein under two definitions (significant-based and top-k-based), derive stable sets.
 
-**File:** extend `src/selection/base.py` or new module `src/stability.py`.
+**File:** `src/stability.py`
 
-**Function:**
-
-```python
-def compute_stability(selections: pd.DataFrame, n_splits: int) -> pd.DataFrame:
-    """Input: selections long-format df. Output: df with [protein_idx, protein_id, frequency, mean_rank]."""
-```
-
-**Stable set construction:**
+**Functions:**
 
 ```python
-def stable_set(stability_df: pd.DataFrame, pi: float, min_size: int, topk_fallback: int) -> list[str]:
-    """Return protein_ids with frequency >= pi. If fewer than min_size, fall back to top-topk_fallback by frequency."""
+def compute_stability(selections: pd.DataFrame, n_splits: int, mode: str = "significant") -> pd.DataFrame:
+    """Compute per-protein selection frequency across splits.
+
+    Args:
+        selections: long-format df with columns [split_id, rank, protein_idx, protein_id, score, significant].
+        n_splits: total number of splits (denominator for frequency).
+        mode: "significant" = frequency of being marked significant;
+              "topk" = frequency of being in top-k (k passed separately or set via filter before calling).
+
+    Returns:
+        df with columns [protein_idx, protein_id, frequency, mean_rank, mean_score].
+        mean_rank and mean_score computed over all splits (not just those where the protein was selected).
+    """
 ```
+
+```python
+def stable_set(stability_df: pd.DataFrame, pi: float, min_size: int, topk_fallback: int) -> tuple[list[str], str]:
+    """Return (protein_ids, method_used) where method_used is 'threshold' or 'topk_fallback'.
+    Primary: protein_ids with frequency >= pi.
+    Fallback: top-topk_fallback by frequency if primary gives fewer than min_size proteins.
+    """
+```
+
+**Two stability views to compute and save:**
+
+1. **Significance-based stability:** how often each protein is marked `significant == True` across splits. This reflects the method's own threshold behaviour under resampling.
+2. **Rank-based stability at each k:** how often each protein appears in the top-k across splits, for each k in `TOPK_VALUES`. This is threshold-free and directly feeds classifier validation.
 
 **Integrate into `scripts/02_run_selection.py`:**
 
 - After per-split selections are saved, compute and save:
-  - `results/selection/<method>/stability.parquet` with all proteins ever selected, their frequency, mean rank when selected.
-  - `results/selection/<method>/stable_set.json` with the derived stable set (primary: π = 0.3, fallback: top-50 by frequency).
+  - `results/selection/<method>/stability_significant.parquet`: one row per protein, columns `[protein_idx, protein_id, frequency, mean_rank, mean_score]`. Frequency = fraction of splits where `significant == True`.
+  - `results/selection/<method>/stability_topk.parquet`: one row per (protein, k), columns `[protein_idx, protein_id, k, frequency, mean_rank]`. Frequency = fraction of splits where protein is in top-k.
+  - `results/selection/<method>/stable_set.json`: the derived stable set using significance-based frequency (primary: π = 0.3, fallback: top-50 by frequency). Contains: protein_ids, method_used ('threshold' or 'topk_fallback'), pi used, actual frequency of each protein in the set.
 
-**Done when:** `stability.parquet` exists and selection frequency curve can be plotted.
+**Done when:** both stability parquets exist, `stable_set.json` is non-empty, and the significance-based frequency curve reproduces the ~72% / 30–38% pattern for t-test.
 
 ## Stage 6: Classifier validation
 
