@@ -299,6 +299,18 @@ def main() -> None:
                     len(gene_list),
                     args.b_perm,
                 )
+
+                log_every = max(1, args.b_perm // 10)
+
+                def _log_progress(done: int, total: int) -> None:
+                    if done == total or done % log_every == 0:
+                        logger.info(
+                            "Permutation null progress: %d/%d (%.0f%%)",
+                            done,
+                            total,
+                            100.0 * done / total,
+                        )
+
                 null_values = permutation_null(
                     background=background_genes,
                     gene_list_size=len(gene_list),
@@ -308,6 +320,7 @@ def main() -> None:
                     tau=BES_JACCARD_TAU,
                     q_threshold=ENRICHMENT_Q_THRESHOLD,
                     seed=args.seed,
+                    progress_callback=_log_progress,
                 )
                 cache_path.parent.mkdir(parents=True, exist_ok=True)
                 np.savez_compressed(

@@ -48,6 +48,8 @@ class RandomSelection(SelectionMethod):
 		rng = np.random.default_rng(self._split_seed)
 
 		ranked_indices = rng.permutation(n_features).astype(np.int64, copy=False)
+		# Scores are uniform random and deliberately NOT sorted by rank: the
+		# random baseline has no meaningful score, only a random ordering.
 		score_pool = rng.uniform(0.0, 1.0, size=n_features)
 		scores = score_pool[ranked_indices]
 

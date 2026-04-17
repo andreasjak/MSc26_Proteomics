@@ -198,3 +198,34 @@ def load_cohort(data_path: Path) -> tuple[np.ndarray, np.ndarray, list[str], lis
 	patient_ids = cohort_table["patient_id"].astype(str).tolist()
 	return X, y, protein_ids, patient_ids
 
+
+def load_cohort_parquet(
+	cohort_path: Path,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+	"""Load the processed cohort parquet and return ``(X, y, protein_ids)``.
+
+	``protein_ids`` is a 1D ``np.ndarray`` of column names aligned with the
+	columns of ``X``. The ``y`` label is validated to be binary ``{0, 1}``.
+	"""
+	if not cohort_path.exists():
+		raise FileNotFoundError(
+			f"Cohort file not found at {cohort_path}. Run scripts/00_prepare_data.py first."
+		)
+
+	cohort = pd.read_parquet(cohort_path)
+	if "y" not in cohort.columns:
+		raise ValueError("Cohort parquet must contain a 'y' column.")
+
+	protein_cols = [c for c in cohort.columns if c not in {"patient_id", "y"}]
+	if not protein_cols:
+		raise ValueError("No protein columns found in cohort parquet.")
+
+	y = cohort["y"].to_numpy(dtype=int)
+	labels = np.unique(y)
+	if not np.all(np.isin(labels, [0, 1])):
+		raise ValueError(f"Expected binary y in {{0,1}}, found labels {labels.tolist()}.")
+
+	X = cohort[protein_cols].to_numpy(dtype=float)
+	protein_ids = np.asarray(protein_cols, dtype=object)
+	return X, y, protein_ids
+

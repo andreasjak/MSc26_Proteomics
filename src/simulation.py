@@ -44,6 +44,9 @@ def _validate_signal_spec(spec: dict[str, Any]) -> None:
 			)
 
 
+# Injection convention: ``_inject_linear`` shifts the pre-filled N(0,1) column
+# by +/-0.5*effect, while the non-linear injectors (saturation, u_shape,
+# threshold, xor_pair) overwrite the column with a purpose-built signal.
 def _inject_linear(
 	X: np.ndarray,
 	y: np.ndarray,

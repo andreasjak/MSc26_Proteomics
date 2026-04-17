@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import pickle
 import sys
 import time
 from pathlib import Path
@@ -16,8 +15,10 @@ sys.path.append(str(Path(__file__).resolve().parent.parent))
 
 from src.classifiers import build_logreg, build_rf, build_xgb
 from src.config import DATA_PROCESSED, RANDOM_SEED, RESULTS_DIR, TOPK_VALUES
+from src.data_loading import load_cohort_parquet
 from src.logging_utils import setup_logging
 from src.metrics import compute_auc, compute_aupr
+from src.splits import load_splits
 
 
 def parse_args() -> argparse.Namespace:
@@ -72,50 +73,6 @@ def parse_args() -> argparse.Namespace:
         help="If set, write logs to file via shared logging utility.",
     )
     return parser.parse_args()
-
-
-def _load_cohort(cohort_path: Path) -> tuple[np.ndarray, np.ndarray]:
-    if not cohort_path.exists():
-        raise FileNotFoundError(
-            f"Cohort file not found at {cohort_path}. Run scripts/00_prepare_data.py first."
-        )
-
-    cohort = pd.read_parquet(cohort_path)
-    if "y" not in cohort.columns:
-        raise ValueError("Cohort parquet must contain a 'y' column.")
-
-    protein_cols = [c for c in cohort.columns if c not in {"patient_id", "y"}]
-    if not protein_cols:
-        raise ValueError("No protein columns found in cohort parquet.")
-
-    X = cohort[protein_cols].to_numpy(dtype=float)
-    y = cohort["y"].to_numpy(dtype=int)
-    return X, y
-
-
-def _load_splits(splits_path: Path) -> list[tuple[np.ndarray, np.ndarray]]:
-    if not splits_path.exists():
-        raise FileNotFoundError(
-            f"Split cache not found at {splits_path}. Run scripts/01_generate_splits.py first."
-        )
-
-    with splits_path.open("rb") as f:
-        raw = pickle.load(f)
-
-    if not isinstance(raw, list) or not raw:
-        raise ValueError("Split cache must be a non-empty list of (train_idx, test_idx).")
-
-    splits: list[tuple[np.ndarray, np.ndarray]] = []
-    for i, pair in enumerate(raw):
-        if not isinstance(pair, tuple) or len(pair) != 2:
-            raise ValueError(f"Split #{i} is not a valid (train_idx, test_idx) tuple.")
-        splits.append(
-            (
-                np.asarray(pair[0], dtype=np.int64),
-                np.asarray(pair[1], dtype=np.int64),
-            )
-        )
-    return splits
 
 
 def _load_selections(selections_path: Path) -> pd.DataFrame:
@@ -173,8 +130,8 @@ def main() -> None:
         args.seed,
     )
 
-    X, y = _load_cohort(args.cohort_path)
-    splits = _load_splits(args.splits_path)
+    X, y, _ = load_cohort_parquet(args.cohort_path)
+    splits = load_splits(args.splits_path)
     selections = _load_selections(selections_path)
 
     max_split_in_selections = int(selections["split_id"].max()) + 1

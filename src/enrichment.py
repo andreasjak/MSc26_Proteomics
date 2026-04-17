@@ -254,6 +254,8 @@ def compute_bes(
 	redundant_mask = jaccard >= tau
 	np.fill_diagonal(redundant_mask, False)
 	redundant_counts = redundant_mask.sum(axis=1)
+	# Redundancy penalty: u_i = 1 / (1 + #{j != i: Jaccard(T_i, T_j) >= tau}).
+	# See the BES definition in texfiles/ for the analytical form this realizes.
 	u = 1.0 / (1.0 + redundant_counts)
 
 	term_size = sig["term_size"].to_numpy(dtype=float)
@@ -312,8 +314,13 @@ def permutation_null(
 	tau: float,
 	q_threshold: float,
 	seed: int,
+	progress_callback=None,
 ) -> np.ndarray:
-	"""Compute permutation-null BES values via random background sampling."""
+	"""Compute permutation-null BES values via random background sampling.
+
+	``progress_callback``, if provided, is invoked as ``callback(done, total)``
+	after every iteration so callers can log long-running loops.
+	"""
 	bg = _coerce_gene_list(background)
 	if gene_list_size <= 0:
 		raise ValueError(f"gene_list_size must be > 0, got {gene_list_size}.")
@@ -325,9 +332,10 @@ def permutation_null(
 		raise ValueError(f"b_perm must be > 0, got {b_perm}.")
 
 	rng = np.random.default_rng(seed)
-	null_values = np.full(int(b_perm), np.nan, dtype=float)
+	total = int(b_perm)
+	null_values = np.full(total, np.nan, dtype=float)
 
-	for i in range(int(b_perm)):
+	for i in range(total):
 		sampled = rng.choice(bg, size=gene_list_size, replace=False).tolist()
 		try:
 			term_df = run_ora(sampled, bg, library)
@@ -341,6 +349,9 @@ def permutation_null(
 			null_values[i] = float(bes_info["bes_raw"])
 		except Exception:
 			null_values[i] = np.nan
+
+		if progress_callback is not None:
+			progress_callback(i + 1, total)
 
 	return null_values
 
