@@ -394,29 +394,6 @@ Do figures in a notebook (`notebooks/results_figures.ipynb`) that reads from the
 
 **Done when:** all summary parquets exist and the figures notebook runs end to end.
 
-## Stage 10: Testing (minimal)
-
-**Goal:** sanity checks on the critical functions, not full coverage.
-
-**File:** `tests/test_selection.py`
-
-- Test that t-test on data with known signal (e.g., a single linearly associated feature) selects that feature.
-- Test that random selection returns the correct number of features.
-- Test that the base class raises if `select` is not implemented.
-
-**File:** `tests/test_simulation.py`
-
-- Test that generated XOR pair has no marginal association (both features individually uncorrelated with y).
-- Test that U-shape features have same class means but different variances.
-- Test that ground truth indices match actual planted features.
-
-**File:** `tests/test_bes.py`
-
-- Test BES on a trivial case (single significant term, no redundancy): value matches hand computation.
-- Test that BES is zero when no terms pass q_threshold.
-
-**Done when:** `pytest tests/` passes.
-
 ## Implementation order
 
 Do stages in this order. Do not start stage N+1 before stage N is done end to end.
@@ -431,7 +408,6 @@ Do stages in this order. Do not start stage N+1 before stage N is done end to en
 8. **Stage 7** (enrichment) → run on t-test, confirm BES and null computation → commit.
 9. **Stage 8** (simulation) → run on t-test, confirm it detects linear signals well and non-linear poorly → commit. This is a critical sanity check.
 10. **Stage 9** (aggregation) → produce first draft of comparison outputs for t-test + random only → commit.
-11. **Stage 10** (tests) → commit.
 
 **Only then** start adding new selection methods (MI, dCor, HSIC, interaction methods). Each new method is a single file in `src/selection/`, one line added to the method registry, then `02`–`05` scripts rerun for that method. The rest of the pipeline is unchanged.
 
@@ -444,13 +420,3 @@ Do stages in this order. Do not start stage N+1 before stage N is done end to en
 - Do not store method-specific hyperparameters in `config.py` beyond the shared ones. Method-specific parameters live in the method's own file with defaults that can be overridden via constructor arguments.
 - Do not skip the simulation validation. It is the ground-truthed check that the methods do what they claim.
 - Do not tune classifier hyperparameters. This is a deliberate design choice documented in the methodology.
-
-## Reasonable first-day deliverable
-
-After stages 0–3: you have an environment, a config, a filtered cohort, and cached splits. Roughly half a day of work.
-
-After stages 4–6 (t-test only): you have per-split selections, stability curve, classifier AUCs for t-test. This is already enough to draft the t-test results subsection of the thesis. One to two days depending on familiarity with the tooling.
-
-After stages 7–8: enrichment and simulation for t-test. Enrichment is slow because of the permutation null (plan for overnight runs); simulation is fast.
-
-Everything after is adding new selection methods one at a time. Each new method: ~half a day for implementation, overnight for full pipeline run.
