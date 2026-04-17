@@ -362,7 +362,7 @@ Each signal type planted at `SIM_SIGNALS_PER_TYPE` = 3 features per effect size 
 - For each repeat r in 1..R:
   - Generate simulated dataset with seed = global_seed + r.
   - Run the selection method (same interface as real-data selection).
-  - For each k in TOPK_VALUES:
+  - For each k in TOPK_VALUES and for native cut-off:
     - Compute recall per signal type: fraction of planted signals of that type in top-k.
     - Compute FDR: fraction of top-k that is noise.
 - Output: `results/simulation/<method>/results.parquet` with columns `[repeat, signal_type, effect_size, k, recall, fdr]`.

@@ -1,11 +1,369 @@
-"""Stage 0 scaffold script.
+"""Run Stage 8 simulation validation for one selection method."""
 
-Populate this script in Stage 8.
-"""
+from __future__ import annotations
+
+import argparse
+import json
+import sys
+import time
+from collections.abc import Callable
+from pathlib import Path
+
+import numpy as np
+import pandas as pd
+
+sys.path.append(str(Path(__file__).resolve().parent.parent))
+
+from src.config import (
+    RANDOM_SEED,
+    RESULTS_DIR,
+    SIM_CLASS_PREVALENCE,
+    SIM_EFFECT_SIZES,
+    SIM_N,
+    SIM_P,
+    SIM_REPEATS,
+    SIM_SIGNALS_PER_TYPE,
+    TOPK_VALUES,
+)
+from src.logging_utils import setup_logging
+from src.selection.base import SelectionMethod
+from src.selection.random import RandomSelection
+from src.selection.ttest import TTestSelection
+from src.simulation import generate_simulated_dataset
+
+
+MethodFactory = Callable[[argparse.Namespace], SelectionMethod]
+
+METHOD_REGISTRY: dict[str, MethodFactory] = {
+    "ttest": lambda _: TTestSelection(),
+    "random": lambda args: RandomSelection(n_significant=args.random_significant),
+}
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description="Run simulation-based recall/FDR validation for one method.",
+    )
+    parser.add_argument(
+        "--method",
+        type=str,
+        required=True,
+        choices=sorted(METHOD_REGISTRY.keys()),
+        help="Selection method to evaluate.",
+    )
+    parser.add_argument(
+        "--n-repeats",
+        type=int,
+        default=SIM_REPEATS,
+        help=f"Number of simulation repeats (default: {SIM_REPEATS}).",
+    )
+    parser.add_argument(
+        "--output-dir",
+        type=Path,
+        default=RESULTS_DIR / "simulation",
+        help="Base output directory (default: results/simulation).",
+    )
+    parser.add_argument(
+        "--seed",
+        type=int,
+        default=RANDOM_SEED,
+        help=f"Global seed. Repeat seed is seed + repeat (default: {RANDOM_SEED}).",
+    )
+    parser.add_argument(
+        "--n-samples",
+        type=int,
+        default=SIM_N,
+        help=f"Number of simulated samples per repeat (default: {SIM_N}).",
+    )
+    parser.add_argument(
+        "--n-features",
+        type=int,
+        default=SIM_P,
+        help=f"Number of simulated features per repeat (default: {SIM_P}).",
+    )
+    parser.add_argument(
+        "--class-prevalence",
+        type=float,
+        default=SIM_CLASS_PREVALENCE,
+        help=f"Positive-class prevalence (default: {SIM_CLASS_PREVALENCE}).",
+    )
+    parser.add_argument(
+        "--signals-per-type",
+        type=int,
+        default=SIM_SIGNALS_PER_TYPE,
+        help=f"Signals per type per effect size (default: {SIM_SIGNALS_PER_TYPE}).",
+    )
+    parser.add_argument(
+        "--effect-sizes",
+        type=float,
+        nargs="*",
+        default=None,
+        help="Optional list of effect sizes. Defaults to SIM_EFFECT_SIZES from config.",
+    )
+    parser.add_argument(
+        "--random-significant",
+        type=int,
+        default=30,
+        help="Native-cutoff size for random baseline significant mask.",
+    )
+    parser.add_argument(
+        "--save-results",
+        action="store_true",
+        help="If set, write logs to file via shared logging utility.",
+    )
+    return parser.parse_args()
+
+
+def _validate_method_output(
+    ranked_indices: np.ndarray,
+    scores: np.ndarray,
+    significant: np.ndarray,
+    n_features: int,
+    method_name: str,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    ranked = np.asarray(ranked_indices)
+    if ranked.shape != (n_features,):
+        raise ValueError(
+            f"{method_name}: ranked_indices must have shape ({n_features},), got {ranked.shape}."
+        )
+    if not np.issubdtype(ranked.dtype, np.integer):
+        raise ValueError(f"{method_name}: ranked_indices must be integer typed.")
+    ranked = ranked.astype(np.int64, copy=False)
+
+    unique = np.unique(ranked)
+    if unique.size != n_features or int(unique[0]) != 0 or int(unique[-1]) != (n_features - 1):
+        raise ValueError(
+            f"{method_name}: ranked_indices must be a permutation of [0, {n_features - 1}]."
+        )
+
+    scores_arr = np.asarray(scores, dtype=float)
+    if scores_arr.shape != (n_features,):
+        raise ValueError(
+            f"{method_name}: scores must have shape ({n_features},), got {scores_arr.shape}."
+        )
+
+    significant_arr = np.asarray(significant, dtype=bool)
+    if significant_arr.shape != (n_features,):
+        raise ValueError(
+            f"{method_name}: significant must have shape ({n_features},), got {significant_arr.shape}."
+        )
+
+    return ranked, scores_arr, significant_arr
+
+
+def _default_signal_specs(
+    effect_sizes: list[float],
+    signals_per_type: int,
+) -> list[dict[str, object]]:
+    specs: list[dict[str, object]] = []
+    for effect in effect_sizes:
+        for signal_type in ["linear", "saturation", "u_shape", "threshold"]:
+            specs.append(
+                {
+                    "signal_type": signal_type,
+                    "effect_size": float(effect),
+                    "n_features": int(signals_per_type),
+                }
+            )
+        specs.append(
+            {
+                "signal_type": "xor_pair",
+                "effect_size": float(effect),
+                "n_pairs": int(signals_per_type),
+            }
+        )
+    return specs
+
+
+def _aggregate_truth_by_type_effect(
+    ground_truth: dict[str, object],
+) -> dict[tuple[str, float], set[int]]:
+    output: dict[tuple[str, float], set[int]] = {}
+    by_type_effect = ground_truth.get("by_type_effect", {})
+    if not isinstance(by_type_effect, dict):
+        raise ValueError("ground_truth['by_type_effect'] is missing or malformed.")
+
+    for signal_type, effect_map in by_type_effect.items():
+        if not isinstance(effect_map, dict):
+            continue
+        for effect, indices in effect_map.items():
+            key = (str(signal_type), float(effect))
+            output[key] = set(int(i) for i in indices)
+    return output
+
+
+def _fdr(selected: np.ndarray, noise_set: set[int]) -> float:
+    if selected.size == 0:
+        return float("nan")
+    n_noise = int(sum(int(i) in noise_set for i in selected.tolist()))
+    return float(n_noise / selected.size)
 
 
 def main() -> None:
-    raise SystemExit("Not implemented yet. Continue with Stage 8 in IMPLEMENTATION_GUIDE.md.")
+    start_time = time.time()
+    args = parse_args()
+
+    if args.n_repeats <= 0:
+        raise ValueError(f"--n-repeats must be > 0, got {args.n_repeats}.")
+    if args.n_samples <= 1:
+        raise ValueError(f"--n-samples must be > 1, got {args.n_samples}.")
+    if args.n_features <= 0:
+        raise ValueError(f"--n-features must be > 0, got {args.n_features}.")
+    if not 0.0 < args.class_prevalence < 1.0:
+        raise ValueError(
+            f"--class-prevalence must be in (0, 1), got {args.class_prevalence}."
+        )
+    if args.signals_per_type <= 0:
+        raise ValueError(
+            f"--signals-per-type must be > 0, got {args.signals_per_type}."
+        )
+
+    effect_sizes = (
+        [float(x) for x in args.effect_sizes]
+        if args.effect_sizes is not None and len(args.effect_sizes) > 0
+        else [float(x) for x in SIM_EFFECT_SIZES]
+    )
+    if any(x <= 0 for x in effect_sizes):
+        raise ValueError(f"All effect sizes must be > 0, got {effect_sizes}.")
+
+    logger = setup_logging(
+        save_results=args.save_results,
+        log_subdir=f"simulation/{args.method}",
+        script_name="05_run_simulation",
+    )
+
+    logger.info("Starting 05_run_simulation.py")
+    logger.info(
+        "Args: method=%s n_repeats=%d n_samples=%d n_features=%d class_prevalence=%.3f signals_per_type=%d effect_sizes=%s seed=%d",
+        args.method,
+        args.n_repeats,
+        args.n_samples,
+        args.n_features,
+        args.class_prevalence,
+        args.signals_per_type,
+        effect_sizes,
+        args.seed,
+    )
+
+    method = METHOD_REGISTRY[args.method](args)
+    logger.info("Using method=%s with params=%s", method.name, method.get_params())
+
+    signal_specs = _default_signal_specs(
+        effect_sizes=effect_sizes,
+        signals_per_type=int(args.signals_per_type),
+    )
+
+    rows: list[dict[str, object]] = []
+    log_every = max(1, args.n_repeats // 5)
+
+    for repeat in range(1, args.n_repeats + 1):
+        repeat_seed = int(args.seed + repeat)
+        method.set_split_seed(repeat_seed)
+
+        X, y, truth = generate_simulated_dataset(
+            n=int(args.n_samples),
+            p=int(args.n_features),
+            class_prevalence=float(args.class_prevalence),
+            signal_specs=signal_specs,
+            seed=repeat_seed,
+        )
+
+        ranked, scores, significant = method.select(X_train=X, y_train=y)
+        ranked, scores, significant = _validate_method_output(
+            ranked_indices=ranked,
+            scores=scores,
+            significant=significant,
+            n_features=int(args.n_features),
+            method_name=method.name,
+        )
+
+        del scores  # only ranking/significance are needed for Stage 8 metrics.
+
+        truth_map = _aggregate_truth_by_type_effect(truth)
+        noise_set = set(int(i) for i in truth.get("noise_indices", []))
+
+        selections: list[tuple[str, np.ndarray]] = []
+        for k in TOPK_VALUES:
+            k_int = int(k)
+            top_idx = ranked[: min(k_int, ranked.size)]
+            selections.append((str(k_int), top_idx))
+
+        native_idx = ranked[significant]
+        selections.append(("native", native_idx))
+
+        for k_label, selected_idx in selections:
+            fdr = _fdr(selected_idx, noise_set)
+
+            for (signal_type, effect_size), truth_indices in truth_map.items():
+                denom = len(truth_indices)
+                if denom == 0:
+                    recall = float("nan")
+                else:
+                    n_found = int(
+                        sum(int(i) in truth_indices for i in selected_idx.tolist())
+                    )
+                    recall = float(n_found / denom)
+
+                rows.append(
+                    {
+                        "repeat": int(repeat),
+                        "signal_type": str(signal_type),
+                        "effect_size": float(effect_size),
+                        "k": str(k_label),
+                        "recall": float(recall),
+                        "fdr": float(fdr),
+                    }
+                )
+
+        if repeat % log_every == 0 or repeat == args.n_repeats:
+            logger.info(
+                "Processed repeat %d/%d (seed=%d, native_selected=%d)",
+                repeat,
+                args.n_repeats,
+                repeat_seed,
+                int(native_idx.size),
+            )
+
+    results = pd.DataFrame(rows)
+    results = results.loc[:, ["repeat", "signal_type", "effect_size", "k", "recall", "fdr"]]
+    results = results.sort_values(
+        ["repeat", "signal_type", "effect_size", "k"],
+        kind="mergesort",
+    ).reset_index(drop=True)
+
+    out_dir = args.output_dir / args.method
+    out_dir.mkdir(parents=True, exist_ok=True)
+    results_path = out_dir / "results.parquet"
+    meta_path = out_dir / "meta.json"
+
+    results.to_parquet(results_path, index=False)
+
+    runtime_seconds = float(time.time() - start_time)
+    meta = {
+        "method": args.method,
+        "method_params": method.get_params(),
+        "n_repeats": int(args.n_repeats),
+        "n_samples": int(args.n_samples),
+        "n_features": int(args.n_features),
+        "class_prevalence": float(args.class_prevalence),
+        "signals_per_type": int(args.signals_per_type),
+        "effect_sizes": [float(x) for x in effect_sizes],
+        "topk_values": [int(k) for k in TOPK_VALUES],
+        "includes_native": True,
+        "seed": int(args.seed),
+        "repeat_seed_rule": "seed + repeat",
+        "results_path": str(results_path),
+        "n_rows": int(len(results)),
+        "runtime_seconds": runtime_seconds,
+    }
+
+    with meta_path.open("w", encoding="utf-8") as f:
+        json.dump(meta, f, indent=2)
+
+    logger.info("Saved simulation results: %s", results_path)
+    logger.info("Saved metadata: %s", meta_path)
+    logger.info("Rows written: %d", len(results))
+    logger.info("Finished in %.2f s", runtime_seconds)
 
 
 if __name__ == "__main__":
