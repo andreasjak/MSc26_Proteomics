@@ -24,4 +24,5 @@ dependencies:
   - pip
   - git
   - pip:
+      - gseapy
       - git+https://github.com/gregversteeg/NPEET.git@8b0d9485423f74e5eb199324cf362765596538d3
