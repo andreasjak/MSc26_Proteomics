@@ -22,6 +22,7 @@ from src.config import (
     PERMUTATION_B,
     RANDOM_SEED,
     RESULTS_DIR,
+    STABILITY_MIN_SIZE,
 )
 from src.enrichment import compute_bes, permutation_null, run_ora
 from src.logging_utils import setup_logging
@@ -115,12 +116,33 @@ def _unique_preserve_order(values: list[str]) -> list[str]:
     return out
 
 
-def _load_stable_set(stable_set_path: Path) -> dict:
-    if not stable_set_path.exists():
+def _load_full_data_ranking(ranking_path: Path) -> pd.DataFrame:
+    if not ranking_path.exists():
         raise FileNotFoundError(
-            f"Stable set file not found at {stable_set_path}. Run scripts/02_run_selection.py first."
+            f"Full-data ranking not found at {ranking_path}. "
+            "Run `scripts/02_run_selection.py --method <method> --full-data` first."
         )
-    return json.loads(stable_set_path.read_text(encoding="utf-8"))
+    df = pd.read_parquet(ranking_path)
+    required = {"rank", "protein_id", "significant"}
+    missing = required - set(df.columns)
+    if missing:
+        raise ValueError(
+            f"Full-data ranking at {ranking_path} is missing columns: {sorted(missing)}."
+        )
+    return df
+
+
+def _select_proteins_from_ranking(
+    ranking: pd.DataFrame,
+    min_size: int,
+) -> tuple[list[str], str]:
+    sig_df = ranking.loc[ranking["significant"].astype(bool)]
+    if len(sig_df) >= min_size:
+        ordered = sig_df.sort_values("rank", kind="mergesort")
+        return [str(p) for p in ordered["protein_id"].tolist()], "significant"
+
+    fallback = ranking.sort_values("rank", kind="mergesort").head(min_size)
+    return [str(p) for p in fallback["protein_id"].tolist()], "topk_fallback"
 
 
 def _load_annotation(annotation_path: Path) -> pd.DataFrame:
@@ -208,21 +230,26 @@ def main() -> None:
     )
 
     method_selection_dir = args.selection_dir / args.method
-    stable_set_path = method_selection_dir / "stable_set.json"
-    stable_payload = _load_stable_set(stable_set_path)
+    ranking_path = method_selection_dir / "full_data_ranking.parquet"
+    ranking = _load_full_data_ranking(ranking_path)
 
-    stable_proteins = [str(p) for p in stable_payload.get("protein_ids", [])]
-    if not stable_proteins:
-        raise ValueError(f"Stable set is empty for method '{args.method}'.")
+    selected_proteins, gene_source = _select_proteins_from_ranking(
+        ranking=ranking,
+        min_size=int(STABILITY_MIN_SIZE),
+    )
+    if not selected_proteins:
+        raise ValueError(
+            f"No proteins selected from full-data ranking for method '{args.method}'."
+        )
 
     annotation_df = _load_annotation(args.annotation_path)
     probe_to_symbol = _make_probe_to_symbol(annotation_df)
 
-    gene_list, missing_stable = _map_proteins_to_genes(stable_proteins, probe_to_symbol)
+    gene_list, missing_selected = _map_proteins_to_genes(selected_proteins, probe_to_symbol)
     if not gene_list:
         raise ValueError(
-            "No stable proteins could be mapped to gene symbols. "
-            "Check stable_set.json and annotation mapping."
+            "No selected proteins could be mapped to gene symbols. "
+            "Check full_data_ranking.parquet and annotation mapping."
         )
 
     background_proteins = _load_background_proteins(args.protein_ids_path, annotation_df)
@@ -237,10 +264,15 @@ def main() -> None:
         raise ValueError("Gene list became empty after intersecting with background.")
 
     logger.info(
-        "Mapped stable proteins to genes: %d -> %d genes (missing=%d)",
-        len(stable_proteins),
+        "Selected proteins from full-data ranking: n=%d source=%s",
+        len(selected_proteins),
+        gene_source,
+    )
+    logger.info(
+        "Mapped selected proteins to genes: %d -> %d genes (missing=%d)",
+        len(selected_proteins),
         len(gene_list),
-        missing_stable,
+        missing_selected,
     )
     logger.info(
         "Mapped background proteins to genes: %d -> %d genes (missing=%d)",
@@ -251,6 +283,20 @@ def main() -> None:
 
     method_out_dir = args.output_dir / args.method
     method_out_dir.mkdir(parents=True, exist_ok=True)
+
+    gene_list_path = method_out_dir / "gene_list.json"
+    gene_list_payload = {
+        "method": args.method,
+        "source": gene_source,
+        "min_size": int(STABILITY_MIN_SIZE),
+        "n_proteins": len(selected_proteins),
+        "n_genes": len(gene_list),
+        "protein_ids": selected_proteins,
+        "gene_symbols": gene_list,
+    }
+    with gene_list_path.open("w", encoding="utf-8") as f:
+        json.dump(gene_list_payload, f, indent=2)
+    logger.info("Saved gene list: %s", gene_list_path)
 
     summary_rows: list[dict[str, object]] = []
 

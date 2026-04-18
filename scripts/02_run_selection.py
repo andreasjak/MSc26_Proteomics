@@ -20,16 +20,13 @@ from src.config import (
     K_SPLITS,
     RANDOM_SEED,
     RESULTS_DIR,
-    STABILITY_MIN_SIZE,
-    STABILITY_PI_PRIMARY,
-    STABILITY_TOPK_FALLBACK,
     TOPK_VALUES,
 )
 from src.logging_utils import setup_logging
 from src.selection.base import SelectionMethod
 from src.selection.random import RandomSelection
 from src.selection.ttest import TTestSelection
-from src.stability import compute_stability, stable_set
+from src.stability import compute_stability
 
 
 MethodFactory = Callable[[argparse.Namespace], SelectionMethod]
@@ -86,6 +83,11 @@ def parse_args() -> argparse.Namespace:
         type=int,
         default=30,
         help="Native-cutoff size for random baseline significant mask.",
+    )
+    parser.add_argument(
+        "--full-data",
+        action="store_true",
+        help="Run selection once on the full cohort and write full_data_ranking.parquet.",
     )
     parser.add_argument(
         "--save-results",
@@ -201,13 +203,14 @@ def main() -> None:
 
     logger.info("Starting 02_run_selection.py")
     logger.info(
-        "Args: method=%s cohort_path=%s splits_path=%s output_dir=%s n_splits=%d seed=%d",
+        "Args: method=%s cohort_path=%s splits_path=%s output_dir=%s n_splits=%d seed=%d full_data=%s",
         args.method,
         args.cohort_path,
         args.splits_path,
         args.output_dir,
         args.n_splits,
         args.seed,
+        args.full_data,
     )
 
     X, y, protein_ids = _load_cohort(args.cohort_path)
@@ -218,6 +221,68 @@ def main() -> None:
         n_proteins,
         float(y.mean()),
     )
+
+    if args.full_data:
+        method = METHOD_REGISTRY[args.method](args)
+        logger.info(
+            "Using method=%s with params=%s (full-data mode)",
+            method.name,
+            method.get_params(),
+        )
+
+        method.set_split_seed(int(args.seed))
+        ranked, scores, significant = method.select(X_train=X, y_train=y)
+        ranked, scores, significant = _validate_method_output(
+            ranked_indices=ranked,
+            scores=scores,
+            significant=significant,
+            n_proteins=n_proteins,
+            method_name=method.name,
+        )
+
+        ranking = pd.DataFrame(
+            {
+                "rank": np.arange(n_proteins, dtype=np.int64),
+                "protein_idx": ranked,
+                "protein_id": protein_ids[ranked],
+                "score": scores,
+                "significant": significant,
+            }
+        )
+
+        out_dir = args.output_dir / args.method
+        out_dir.mkdir(parents=True, exist_ok=True)
+        ranking_path = out_dir / "full_data_ranking.parquet"
+        full_meta_path = out_dir / "full_data_meta.json"
+
+        ranking.to_parquet(ranking_path, index=False)
+
+        runtime_seconds = float(time.time() - start_time)
+        full_meta = {
+            "method": method.name,
+            "method_params": method.get_params(),
+            "n_samples": int(n_samples),
+            "n_ards": int(y.sum()),
+            "n_proteins": int(n_proteins),
+            "n_significant": int(significant.sum()),
+            "seed": int(args.seed),
+            "cohort_path": str(args.cohort_path),
+            "output_path": str(ranking_path),
+            "runtime_seconds": runtime_seconds,
+        }
+        with full_meta_path.open("w", encoding="utf-8") as f:
+            json.dump(full_meta, f, indent=2)
+
+        logger.info("Saved full-data ranking: %s", ranking_path)
+        logger.info("Saved full-data metadata: %s", full_meta_path)
+        logger.info(
+            "Full-data selection: n_significant=%d top_protein=%s top_score=%.6g",
+            int(significant.sum()),
+            str(protein_ids[ranked[0]]),
+            float(scores[0]),
+        )
+        logger.info("Total runtime: %.2f s", runtime_seconds)
+        return
 
     splits = _load_splits(args.splits_path)
     if args.n_splits > len(splits):
@@ -285,7 +350,6 @@ def main() -> None:
     selections_path = out_dir / "selections.parquet"
     stability_significant_path = out_dir / "stability_significant.parquet"
     stability_topk_path = out_dir / "stability_topk.parquet"
-    stable_set_path = out_dir / "stable_set.json"
     meta_path = out_dir / "meta.json"
 
     selections.to_parquet(selections_path, index=False)
@@ -317,38 +381,6 @@ def main() -> None:
     ]
     stability_topk.to_parquet(stability_topk_path, index=False)
 
-    stable_ids, method_used = stable_set(
-        stability_df=stability_significant,
-        pi=STABILITY_PI_PRIMARY,
-        min_size=STABILITY_MIN_SIZE,
-        topk_fallback=STABILITY_TOPK_FALLBACK,
-    )
-
-    frequency_lookup = dict(
-        zip(
-            stability_significant["protein_id"].astype(str),
-            stability_significant["frequency"].astype(float),
-        )
-    )
-    stable_payload = {
-        "method": method.name,
-        "method_used": method_used,
-        "pi": float(STABILITY_PI_PRIMARY),
-        "min_size": int(STABILITY_MIN_SIZE),
-        "topk_fallback": int(STABILITY_TOPK_FALLBACK),
-        "n_proteins": int(len(stable_ids)),
-        "protein_ids": stable_ids,
-        "protein_frequencies": [
-            {
-                "protein_id": protein_id,
-                "frequency": float(frequency_lookup[protein_id]),
-            }
-            for protein_id in stable_ids
-        ],
-    }
-    with stable_set_path.open("w", encoding="utf-8") as f:
-        json.dump(stable_payload, f, indent=2)
-
     runtime_seconds = float(time.time() - start_time)
     sig_arr = np.asarray(significant_counts, dtype=float)
     sig_freq_arr = stability_significant["frequency"].to_numpy(dtype=float)
@@ -367,7 +399,6 @@ def main() -> None:
         "output_path": str(selections_path),
         "stability_significant_path": str(stability_significant_path),
         "stability_topk_path": str(stability_topk_path),
-        "stable_set_path": str(stable_set_path),
         "topk_values": [int(k) for k in TOPK_VALUES],
         "runtime_seconds": runtime_seconds,
         "significant_per_split": {
@@ -380,10 +411,6 @@ def main() -> None:
             "n_ge_0_5": int((sig_freq_arr >= 0.5).sum()),
             "n_ge_0_3": int((sig_freq_arr >= 0.3).sum()),
         },
-        "stable_set": {
-            "method_used": method_used,
-            "n_proteins": int(len(stable_ids)),
-        },
     }
 
     with meta_path.open("w", encoding="utf-8") as f:
@@ -392,7 +419,6 @@ def main() -> None:
     logger.info("Saved selections: %s", selections_path)
     logger.info("Saved significance stability: %s", stability_significant_path)
     logger.info("Saved top-k stability: %s", stability_topk_path)
-    logger.info("Saved stable set: %s", stable_set_path)
     logger.info("Saved metadata: %s", meta_path)
     logger.info(
         "Significant proteins per split: min=%d median=%.1f max=%d",
@@ -405,11 +431,6 @@ def main() -> None:
         float(sig_freq_arr.max()),
         int((sig_freq_arr >= 0.3).sum()),
         int((sig_freq_arr >= 0.5).sum()),
-    )
-    logger.info(
-        "Stable set: method=%s size=%d",
-        method_used,
-        len(stable_ids),
     )
     logger.info("Total runtime: %.2f s", runtime_seconds)
 

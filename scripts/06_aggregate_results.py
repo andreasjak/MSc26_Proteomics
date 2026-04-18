@@ -145,6 +145,33 @@ def aggregate_classifier_summary(
     return summary, missing_methods
 
 
+def _mean_pairwise_jaccard_topk(
+    selections: pd.DataFrame,
+    k: int,
+) -> float:
+    if not {"split_id", "rank", "protein_id"}.issubset(selections.columns):
+        return float("nan")
+
+    top = selections.loc[selections["rank"] < k, ["split_id", "protein_id"]]
+    sets_by_split: list[set[str]] = [
+        set(group["protein_id"].astype(str).tolist())
+        for _, group in top.groupby("split_id", sort=True)
+    ]
+    if len(sets_by_split) < 2:
+        return float("nan")
+
+    jaccards: list[float] = []
+    for i in range(len(sets_by_split)):
+        for j in range(i + 1, len(sets_by_split)):
+            a, b = sets_by_split[i], sets_by_split[j]
+            union = a | b
+            if not union:
+                continue
+            jaccards.append(len(a & b) / len(union))
+
+    return float(np.mean(jaccards)) if jaccards else float("nan")
+
+
 def aggregate_stability_summary(
     methods: list[str],
     results_dir: Path,
@@ -152,17 +179,16 @@ def aggregate_stability_summary(
     pi_threshold: float,
     strict_missing: bool,
     logger,
-) -> tuple[pd.DataFrame, pd.DataFrame, dict[str, set[str]], list[str]]:
+) -> tuple[pd.DataFrame, pd.DataFrame, list[str]]:
     rows: list[dict[str, object]] = []
     curve_frames: list[pd.DataFrame] = []
-    stable_sets: dict[str, set[str]] = {}
     missing_methods: list[str] = []
 
     required = {"protein_id", "frequency"}
 
     for method in methods:
         stability_path = results_dir / "selection" / method / "stability_significant.parquet"
-        stable_set_path = results_dir / "selection" / method / "stable_set.json"
+        selections_path = results_dir / "selection" / method / "selections.parquet"
 
         stability = _load_parquet(
             path=stability_path,
@@ -194,21 +220,17 @@ def aggregate_stability_summary(
         n_ge_03 = int((stability["frequency"] >= 0.3).sum())
         stable_size_pi = int((stability["frequency"] >= pi_threshold).sum())
 
-        stable_set_payload = _load_json(
-            path=stable_set_path,
+        selections = _load_parquet(
+            path=selections_path,
+            label=f"selections for method='{method}'",
             strict_missing=strict_missing,
             logger=logger,
         )
-
-        stable_ids: list[str] = []
-        stable_size_saved = None
-        stable_method_used = None
-        if stable_set_payload is not None:
-            stable_ids = [str(x) for x in stable_set_payload.get("protein_ids", [])]
-            stable_size_saved = int(stable_set_payload.get("n_proteins", len(stable_ids)))
-            stable_method_used = stable_set_payload.get("method_used")
-
-        stable_sets[method] = set(stable_ids)
+        mean_jaccard_top50 = (
+            _mean_pairwise_jaccard_topk(selections, k=50)
+            if selections is not None
+            else float("nan")
+        )
 
         rows.append(
             {
@@ -217,8 +239,7 @@ def aggregate_stability_summary(
                 "top_frequency": top_frequency,
                 "n_ge_0_5": n_ge_05,
                 "n_ge_0_3": n_ge_03,
-                "stable_set_size_saved": stable_size_saved,
-                "stable_set_method_used": stable_method_used,
+                "mean_jaccard_top50": mean_jaccard_top50,
             }
         )
 
@@ -241,7 +262,64 @@ def aggregate_stability_summary(
     frequency_curve.to_parquet(curve_path, index=False)
     logger.info("Saved selection frequency curve: %s (rows=%d)", curve_path, len(frequency_curve))
 
-    return summary, frequency_curve, stable_sets, missing_methods
+    return summary, frequency_curve, missing_methods
+
+
+def aggregate_full_data_summary(
+    methods: list[str],
+    results_dir: Path,
+    output_dir: Path,
+    strict_missing: bool,
+    logger,
+) -> tuple[pd.DataFrame, dict[str, set[str]], list[str]]:
+    rows: list[dict[str, object]] = []
+    full_data_sets: dict[str, set[str]] = {}
+    missing_methods: list[str] = []
+
+    required = {"rank", "protein_id", "score", "significant"}
+
+    for method in methods:
+        ranking_path = results_dir / "selection" / method / "full_data_ranking.parquet"
+        ranking = _load_parquet(
+            path=ranking_path,
+            label=f"full_data_ranking for method='{method}'",
+            strict_missing=strict_missing,
+            logger=logger,
+        )
+        if ranking is None:
+            missing_methods.append(method)
+            continue
+
+        _check_columns(ranking, required=required, label=str(ranking_path))
+        ranking = ranking.copy()
+        ranking["protein_id"] = ranking["protein_id"].astype(str)
+        ranking["significant"] = ranking["significant"].astype(bool)
+        ranking["rank"] = pd.to_numeric(ranking["rank"], errors="coerce").astype("Int64")
+
+        sig_ids = set(ranking.loc[ranking["significant"], "protein_id"].tolist())
+        full_data_sets[method] = sig_ids
+
+        top_row = ranking.sort_values("rank", kind="mergesort").iloc[0]
+        rows.append(
+            {
+                "method": method,
+                "n_significant": int(len(sig_ids)),
+                "top_protein": str(top_row["protein_id"]),
+                "top_score": float(top_row["score"]),
+            }
+        )
+
+    if not rows:
+        raise ValueError(
+            "No full-data inputs available. Cannot create full_data_summary.parquet."
+        )
+
+    summary = pd.DataFrame(rows).sort_values(["method"], kind="mergesort").reset_index(drop=True)
+    out_path = output_dir / "full_data_summary.parquet"
+    summary.to_parquet(out_path, index=False)
+    logger.info("Saved full-data summary: %s (rows=%d)", out_path, len(summary))
+
+    return summary, full_data_sets, missing_methods
 
 
 def aggregate_enrichment_summary(
@@ -348,18 +426,20 @@ def aggregate_simulation_summary(
 
 
 def aggregate_protein_overlap(
-    stable_sets: dict[str, set[str]],
+    protein_sets: dict[str, set[str]],
     output_dir: Path,
     logger,
+    filename: str = "protein_overlap.parquet",
+    label: str = "protein overlap",
 ) -> pd.DataFrame:
-    methods = sorted(stable_sets.keys())
+    methods = sorted(protein_sets.keys())
     if not methods:
-        raise ValueError("No stable sets available. Cannot create protein_overlap.parquet.")
+        raise ValueError(f"No protein sets available. Cannot create {filename}.")
 
     rows: list[dict[str, object]] = []
     for method_a, method_b in combinations_with_replacement(methods, 2):
-        set_a = stable_sets.get(method_a, set())
-        set_b = stable_sets.get(method_b, set())
+        set_a = protein_sets.get(method_a, set())
+        set_b = protein_sets.get(method_b, set())
 
         n_a = int(len(set_a))
         n_b = int(len(set_b))
@@ -383,9 +463,9 @@ def aggregate_protein_overlap(
         ["method_a", "method_b"], kind="mergesort"
     ).reset_index(drop=True)
 
-    out_path = output_dir / "protein_overlap.parquet"
+    out_path = output_dir / filename
     overlap.to_parquet(out_path, index=False)
-    logger.info("Saved protein overlap: %s (rows=%d)", out_path, len(overlap))
+    logger.info("Saved %s: %s (rows=%d)", label, out_path, len(overlap))
     return overlap
 
 
@@ -430,11 +510,19 @@ def main() -> None:
         logger=logger,
     )
 
-    stability_summary, frequency_curve, stable_sets, missing_stability = aggregate_stability_summary(
+    stability_summary, frequency_curve, missing_stability = aggregate_stability_summary(
         methods=methods,
         results_dir=args.results_dir,
         output_dir=output_dir,
         pi_threshold=float(args.pi_threshold),
+        strict_missing=args.strict_missing,
+        logger=logger,
+    )
+
+    full_data_summary, full_data_sets, missing_full_data = aggregate_full_data_summary(
+        methods=methods,
+        results_dir=args.results_dir,
+        output_dir=output_dir,
         strict_missing=args.strict_missing,
         logger=logger,
     )
@@ -456,9 +544,11 @@ def main() -> None:
     )
 
     overlap = aggregate_protein_overlap(
-        stable_sets=stable_sets,
+        protein_sets=full_data_sets,
         output_dir=output_dir,
         logger=logger,
+        filename="full_data_overlap.parquet",
+        label="full-data overlap",
     )
 
     runtime_seconds = float(time.time() - start_time)
@@ -468,6 +558,7 @@ def main() -> None:
         "methods_present": {
             "classifier": sorted(set(classifier_summary["method"].astype(str).tolist())),
             "stability": sorted(set(stability_summary["method"].astype(str).tolist())),
+            "full_data": sorted(set(full_data_summary["method"].astype(str).tolist())),
             "enrichment": sorted(set(enrichment_summary["method"].astype(str).tolist())),
             "simulation": sorted(set(simulation_summary["method"].astype(str).tolist())),
             "overlap": sorted(
@@ -478,6 +569,7 @@ def main() -> None:
         "missing_methods": {
             "classifier": sorted(set(missing_classifier)),
             "stability": sorted(set(missing_stability)),
+            "full_data": sorted(set(missing_full_data)),
             "enrichment": sorted(set(missing_enrichment)),
             "simulation": sorted(set(missing_simulation)),
         },
@@ -487,9 +579,10 @@ def main() -> None:
             "classifier_summary": str(output_dir / "classifier_summary.parquet"),
             "stability_summary": str(output_dir / "stability_summary.parquet"),
             "selection_frequency_curve": str(output_dir / "selection_frequency_curve.parquet"),
+            "full_data_summary": str(output_dir / "full_data_summary.parquet"),
+            "full_data_overlap": str(output_dir / "full_data_overlap.parquet"),
             "enrichment_summary": str(output_dir / "enrichment_summary.parquet"),
             "simulation_summary": str(output_dir / "simulation_summary.parquet"),
-            "protein_overlap": str(output_dir / "protein_overlap.parquet"),
             "figures_dir": str(output_dir / "figures"),
         },
     }
