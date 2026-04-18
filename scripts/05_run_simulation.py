@@ -6,7 +6,6 @@ import argparse
 import json
 import sys
 import time
-from collections.abc import Callable
 from pathlib import Path
 
 import numpy as np
@@ -26,18 +25,8 @@ from src.config import (
     TOPK_VALUES,
 )
 from src.logging_utils import setup_logging
-from src.selection.base import SelectionMethod
-from src.selection.random import RandomSelection
-from src.selection.ttest import TTestSelection
+from src.selection import METHOD_REGISTRY, validate_selection_output
 from src.simulation import generate_simulated_dataset
-
-
-MethodFactory = Callable[[argparse.Namespace], SelectionMethod]
-
-METHOD_REGISTRY: dict[str, MethodFactory] = {
-    "ttest": lambda _: TTestSelection(),
-    "random": lambda args: RandomSelection(n_significant=args.random_significant),
-}
 
 
 def parse_args() -> argparse.Namespace:
@@ -112,43 +101,6 @@ def parse_args() -> argparse.Namespace:
         help="If set, write logs to file via shared logging utility.",
     )
     return parser.parse_args()
-
-
-def _validate_method_output(
-    ranked_indices: np.ndarray,
-    scores: np.ndarray,
-    significant: np.ndarray,
-    n_features: int,
-    method_name: str,
-) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    ranked = np.asarray(ranked_indices)
-    if ranked.shape != (n_features,):
-        raise ValueError(
-            f"{method_name}: ranked_indices must have shape ({n_features},), got {ranked.shape}."
-        )
-    if not np.issubdtype(ranked.dtype, np.integer):
-        raise ValueError(f"{method_name}: ranked_indices must be integer typed.")
-    ranked = ranked.astype(np.int64, copy=False)
-
-    unique = np.unique(ranked)
-    if unique.size != n_features or int(unique[0]) != 0 or int(unique[-1]) != (n_features - 1):
-        raise ValueError(
-            f"{method_name}: ranked_indices must be a permutation of [0, {n_features - 1}]."
-        )
-
-    scores_arr = np.asarray(scores, dtype=float)
-    if scores_arr.shape != (n_features,):
-        raise ValueError(
-            f"{method_name}: scores must have shape ({n_features},), got {scores_arr.shape}."
-        )
-
-    significant_arr = np.asarray(significant, dtype=bool)
-    if significant_arr.shape != (n_features,):
-        raise ValueError(
-            f"{method_name}: significant must have shape ({n_features},), got {significant_arr.shape}."
-        )
-
-    return ranked, scores_arr, significant_arr
 
 
 def _default_signal_specs(
@@ -269,15 +221,13 @@ def main() -> None:
         )
 
         ranked, scores, significant = method.select(X_train=X, y_train=y)
-        ranked, scores, significant = _validate_method_output(
+        ranked, _, significant = validate_selection_output(
             ranked_indices=ranked,
             scores=scores,
             significant=significant,
             n_features=int(args.n_features),
             method_name=method.name,
         )
-
-        del scores  # only ranking/significance are needed for Stage 8 metrics.
 
         truth_map = _aggregate_truth_by_type_effect(truth)
         noise_set = set(int(i) for i in truth.get("noise_indices", []))

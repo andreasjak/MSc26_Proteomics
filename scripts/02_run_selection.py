@@ -4,10 +4,8 @@ from __future__ import annotations
 
 import argparse
 import json
-import pickle
 import sys
 import time
-from collections.abc import Callable
 from pathlib import Path
 
 import numpy as np
@@ -22,6 +20,7 @@ from src.config import (
     RESULTS_DIR,
     TOPK_VALUES,
 )
+from src.data_loading import load_cohort_parquet
 from src.logging_utils import setup_logging
 from src.selection.base import SelectionMethod
 from src.selection.random import RandomSelection
@@ -97,93 +96,6 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def _load_cohort(cohort_path: Path) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    if not cohort_path.exists():
-        raise FileNotFoundError(
-            f"Cohort file not found at {cohort_path}. Run scripts/00_prepare_data.py first."
-        )
-
-    cohort = pd.read_parquet(cohort_path)
-    if "y" not in cohort.columns:
-        raise ValueError("Cohort parquet must contain a 'y' column.")
-
-    protein_cols = [c for c in cohort.columns if c not in {"patient_id", "y"}]
-    if not protein_cols:
-        raise ValueError("No protein columns found in cohort parquet.")
-
-    y = cohort["y"].to_numpy(dtype=int)
-    labels = np.unique(y)
-    if not np.all(np.isin(labels, [0, 1])):
-        raise ValueError(f"Expected binary y in {{0,1}}, found labels {labels.tolist()}.")
-
-    X = cohort[protein_cols].to_numpy(dtype=float)
-    protein_ids = np.asarray(protein_cols, dtype=object)
-    return X, y, protein_ids
-
-
-def _load_splits(splits_path: Path) -> list[tuple[np.ndarray, np.ndarray]]:
-    if not splits_path.exists():
-        raise FileNotFoundError(
-            f"Split cache not found at {splits_path}. Run scripts/01_generate_splits.py first."
-        )
-
-    with splits_path.open("rb") as f:
-        splits = pickle.load(f)
-
-    if not isinstance(splits, list) or len(splits) == 0:
-        raise ValueError("Split cache must be a non-empty list of (train_idx, test_idx).")
-
-    parsed: list[tuple[np.ndarray, np.ndarray]] = []
-    for i, pair in enumerate(splits):
-        if not isinstance(pair, tuple) or len(pair) != 2:
-            raise ValueError(f"Split #{i} is not a valid (train_idx, test_idx) tuple.")
-        train_idx = np.asarray(pair[0], dtype=np.int64)
-        test_idx = np.asarray(pair[1], dtype=np.int64)
-        parsed.append((train_idx, test_idx))
-
-    return parsed
-
-
-def _validate_method_output(
-    ranked_indices: np.ndarray,
-    scores: np.ndarray,
-    significant: np.ndarray,
-    n_proteins: int,
-    method_name: str,
-) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    ranked = np.asarray(ranked_indices)
-    if ranked.shape != (n_proteins,):
-        raise ValueError(
-            f"{method_name}: ranked_indices must have shape ({n_proteins},), "
-            f"got {ranked.shape}."
-        )
-    if not np.issubdtype(ranked.dtype, np.integer):
-        raise ValueError(f"{method_name}: ranked_indices must be integer typed.")
-    ranked = ranked.astype(np.int64, copy=False)
-
-    unique = np.unique(ranked)
-    if unique.size != n_proteins or int(unique[0]) != 0 or int(unique[-1]) != (n_proteins - 1):
-        raise ValueError(
-            f"{method_name}: ranked_indices must be a permutation of [0, {n_proteins - 1}]."
-        )
-
-    scores_arr = np.asarray(scores, dtype=float)
-    if scores_arr.shape != (n_proteins,):
-        raise ValueError(
-            f"{method_name}: scores must have shape ({n_proteins},), "
-            f"got {scores_arr.shape}."
-        )
-
-    significant_arr = np.asarray(significant, dtype=bool)
-    if significant_arr.shape != (n_proteins,):
-        raise ValueError(
-            f"{method_name}: significant must have shape ({n_proteins},), "
-            f"got {significant_arr.shape}."
-        )
-
-    return ranked, scores_arr, significant_arr
-
-
 def main() -> None:
     start_time = time.time()
     args = parse_args()
@@ -213,7 +125,7 @@ def main() -> None:
         args.full_data,
     )
 
-    X, y, protein_ids = _load_cohort(args.cohort_path)
+    X, y, protein_ids = load_cohort_parquet(args.cohort_path)
     n_samples, n_proteins = X.shape
     logger.info(
         "Loaded cohort: n_samples=%d n_proteins=%d prevalence=%.4f",
@@ -306,11 +218,11 @@ def main() -> None:
         y_train = y[train_idx]
 
         ranked, scores, significant = method.select(X_train=X_train, y_train=y_train)
-        ranked, scores, significant = _validate_method_output(
+        ranked, scores, significant = validate_selection_output(
             ranked_indices=ranked,
             scores=scores,
             significant=significant,
-            n_proteins=n_proteins,
+            n_features=n_proteins,
             method_name=method.name,
         )
 

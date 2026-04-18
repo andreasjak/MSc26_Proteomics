@@ -6,6 +6,9 @@ entire pipeline.
 
 from __future__ import annotations
 
+import pickle
+from pathlib import Path
+
 import numpy as np
 from sklearn.model_selection import StratifiedShuffleSplit
 
@@ -63,4 +66,33 @@ def generate_splits(
 			)
 		)
 
+	return splits
+
+
+def load_splits(splits_path: Path) -> list[tuple[np.ndarray, np.ndarray]]:
+	"""Load the cached split list written by ``scripts/01_generate_splits.py``.
+
+	Raises on a missing file or malformed cache structure.
+	"""
+	if not splits_path.exists():
+		raise FileNotFoundError(
+			f"Split cache not found at {splits_path}. Run scripts/01_generate_splits.py first."
+		)
+
+	with splits_path.open("rb") as f:
+		raw = pickle.load(f)
+
+	if not isinstance(raw, list) or not raw:
+		raise ValueError("Split cache must be a non-empty list of (train_idx, test_idx).")
+
+	splits: list[tuple[np.ndarray, np.ndarray]] = []
+	for i, pair in enumerate(raw):
+		if not isinstance(pair, tuple) or len(pair) != 2:
+			raise ValueError(f"Split #{i} is not a valid (train_idx, test_idx) tuple.")
+		splits.append(
+			(
+				np.asarray(pair[0], dtype=np.int64),
+				np.asarray(pair[1], dtype=np.int64),
+			)
+		)
 	return splits
