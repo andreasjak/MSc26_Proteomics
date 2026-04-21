@@ -22,18 +22,9 @@ from src.config import (
 )
 from src.data_loading import load_cohort_parquet
 from src.logging_utils import setup_logging
-from src.selection.base import SelectionMethod
-from src.selection.random import RandomSelection
-from src.selection.ttest import TTestSelection
+from src.selection import METHOD_REGISTRY, validate_selection_output
+from src.splits import load_splits
 from src.stability import compute_stability
-
-
-MethodFactory = Callable[[argparse.Namespace], SelectionMethod]
-
-METHOD_REGISTRY: dict[str, MethodFactory] = {
-    "ttest": lambda _: TTestSelection(),
-    "random": lambda args: RandomSelection(n_significant=args.random_significant),
-}
 
 
 def parse_args() -> argparse.Namespace:
@@ -144,11 +135,11 @@ def main() -> None:
 
         method.set_split_seed(int(args.seed))
         ranked, scores, significant = method.select(X_train=X, y_train=y)
-        ranked, scores, significant = _validate_method_output(
+        ranked, scores, significant = validate_selection_output(
             ranked_indices=ranked,
             scores=scores,
             significant=significant,
-            n_proteins=n_proteins,
+            n_features=n_proteins,
             method_name=method.name,
         )
 
@@ -196,7 +187,7 @@ def main() -> None:
         logger.info("Total runtime: %.2f s", runtime_seconds)
         return
 
-    splits = _load_splits(args.splits_path)
+    splits = load_splits(args.splits_path)
     if args.n_splits > len(splits):
         raise ValueError(
             f"Requested n_splits={args.n_splits}, but only {len(splits)} cached splits are available."

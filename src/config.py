@@ -33,9 +33,9 @@ BES_CAP_C = 10
 BES_JACCARD_TAU = 0.5
 ENRICHMENT_Q_THRESHOLD = 0.05
 ENRICHMENT_LIBRARIES = [
-	"GO_Biological_Process_2023",
-	"KEGG_2021_Human",
-	"Reactome_2022",
+	"GO_Biological_Process_2025",
+	"KEGG_2026",
+	"Reactome_Pathways_2024",
 ]
 PERMUTATION_B = 1000
 
