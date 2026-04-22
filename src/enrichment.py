@@ -256,7 +256,7 @@ def compute_bes(
 	redundant_counts = redundant_mask.sum(axis=1)
 	# Redundancy penalty: u_i = 1 / (1 + #{j != i: Jaccard(T_i, T_j) >= tau}).
 	# See the BES definition in texfiles/ for the analytical form this realizes.
-	u = 1.0 / (1.0 + redundant_counts)
+	u = np.ones(m) # 1.0 / (1.0 + redundant_counts)
 
 	term_size = sig["term_size"].to_numpy(dtype=float)
 	overlap_size = sig["overlap_size"].to_numpy(dtype=float)
@@ -265,8 +265,8 @@ def compute_bes(
 	term_size = np.where(term_size > 0, term_size, np.nan)
 	overlap_size = np.where(overlap_size >= 0, overlap_size, 0.0)
 
-	a = np.where(np.isfinite(term_size), 1.0 / np.log2(term_size + 1.0), 0.0)
-	g = overlap_size / float(n_gene_list)
+	a = np.ones(m) # np.where(np.isfinite(term_size), 1.0 / np.log2(term_size + 1.0), 0.0)
+	g = np.ones(m) # overlap_size / float(n_gene_list)
 	s = np.minimum(-np.log10(np.clip(q_vals, np.finfo(float).tiny, 1.0)), float(c))
 
 	weight = u * a * g
