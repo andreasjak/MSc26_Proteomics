@@ -191,7 +191,7 @@ def default_param_grid(grid_size: str = "small") -> dict:
     """Reasonable RF grids for p >> n proteomics."""
     if grid_size == "small":
         return {
-            "n_estimators": [300, 600, 2000],
+            "n_estimators": [300, 600],
             "max_depth": [None, 20],
             "min_samples_split": [2, 10],
             "min_samples_leaf": [1, 3],
