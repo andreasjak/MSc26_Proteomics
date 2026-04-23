@@ -28,7 +28,7 @@ class TTestSelection(SelectionMethod):
 		self,
 		X_train: np.ndarray,
 		y_train: np.ndarray,
-	) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+	) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
 		X = np.asarray(X_train, dtype=float)
 		y = np.asarray(y_train)
 
@@ -48,6 +48,10 @@ class TTestSelection(SelectionMethod):
 		neg_mask = y == 0
 		if int(pos_mask.sum()) == 0 or int(neg_mask.sum()) == 0:
 			raise ValueError("y_train must contain both classes 0 and 1.")
+
+		mean_diff = np.nanmean(X[pos_mask], axis=0) - np.nanmean(X[neg_mask], axis=0)
+		mean_diff = np.asarray(mean_diff, dtype=float)
+		mean_diff = np.where(np.isfinite(mean_diff), mean_diff, 0.0)
 
 		_, p_values = ttest_ind(
 			X[pos_mask],
@@ -70,8 +74,11 @@ class TTestSelection(SelectionMethod):
 		q_values = np.asarray(q_values, dtype=float)
 		rejected = np.asarray(rejected, dtype=bool)
 
-		ranked_indices = np.lexsort((p_values, q_values)).astype(np.int64, copy=False)
-		scores = q_values[ranked_indices]
+		ranked_indices = np.lexsort(
+			(p_values, -np.abs(mean_diff), q_values)
+		).astype(np.int64, copy=False)
+		scores = mean_diff[ranked_indices]
+		q_value = q_values[ranked_indices]
 		significant = rejected[ranked_indices]
 
-		return ranked_indices, scores, significant
+		return ranked_indices, scores, q_value, significant

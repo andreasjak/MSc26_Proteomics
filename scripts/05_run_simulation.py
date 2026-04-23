@@ -220,10 +220,11 @@ def main() -> None:
             seed=repeat_seed,
         )
 
-        ranked, scores, significant = method.select(X_train=X, y_train=y)
-        ranked, _, significant = validate_selection_output(
+        ranked, scores, q_value, significant = method.select(X_train=X, y_train=y)
+        ranked, _, _, significant = validate_selection_output(
             ranked_indices=ranked,
             scores=scores,
+            q_value=q_value,
             significant=significant,
             n_features=int(args.n_features),
             method_name=method.name,

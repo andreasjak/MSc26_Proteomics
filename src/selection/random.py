@@ -30,7 +30,7 @@ class RandomSelection(SelectionMethod):
 		self,
 		X_train: np.ndarray,
 		y_train: np.ndarray,
-	) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+	) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
 		X = np.asarray(X_train)
 		y = np.asarray(y_train)
 
@@ -52,10 +52,11 @@ class RandomSelection(SelectionMethod):
 		# random baseline has no meaningful score, only a random ordering.
 		score_pool = rng.uniform(0.0, 1.0, size=n_features)
 		scores = score_pool[ranked_indices]
+		q_value = np.ones(n_features, dtype=float)
 
 		significant = np.zeros(n_features, dtype=bool)
 		m = min(self.n_significant, n_features)
 		if m > 0:
 			significant[:m] = True
 
-		return ranked_indices, scores, significant
+		return ranked_indices, scores, q_value, significant

@@ -134,10 +134,11 @@ def main() -> None:
         )
 
         method.set_split_seed(int(args.seed))
-        ranked, scores, significant = method.select(X_train=X, y_train=y)
-        ranked, scores, significant = validate_selection_output(
+        ranked, scores, q_value, significant = method.select(X_train=X, y_train=y)
+        ranked, scores, q_value, significant = validate_selection_output(
             ranked_indices=ranked,
             scores=scores,
+            q_value=q_value,
             significant=significant,
             n_features=n_proteins,
             method_name=method.name,
@@ -149,6 +150,7 @@ def main() -> None:
                 "protein_idx": ranked,
                 "protein_id": protein_ids[ranked],
                 "score": scores,
+                "q_value": q_value,
                 "significant": significant,
             }
         )
@@ -179,10 +181,11 @@ def main() -> None:
         logger.info("Saved full-data ranking: %s", ranking_path)
         logger.info("Saved full-data metadata: %s", full_meta_path)
         logger.info(
-            "Full-data selection: n_significant=%d top_protein=%s top_score=%.6g",
+            "Full-data selection: n_significant=%d top_protein=%s top_score=%.6g top_qvalue=%.6g",
             int(significant.sum()),
             str(protein_ids[ranked[0]]),
             float(scores[0]),
+            float(q_value[0]),
         )
         logger.info("Total runtime: %.2f s", runtime_seconds)
         return
@@ -208,10 +211,11 @@ def main() -> None:
         X_train = X[train_idx]
         y_train = y[train_idx]
 
-        ranked, scores, significant = method.select(X_train=X_train, y_train=y_train)
-        ranked, scores, significant = validate_selection_output(
+        ranked, scores, q_value, significant = method.select(X_train=X_train, y_train=y_train)
+        ranked, scores, q_value, significant = validate_selection_output(
             ranked_indices=ranked,
             scores=scores,
+            q_value=q_value,
             significant=significant,
             n_features=n_proteins,
             method_name=method.name,
@@ -224,6 +228,7 @@ def main() -> None:
                 "protein_idx": ranked,
                 "protein_id": protein_ids[ranked],
                 "score": scores,
+                "q_value": q_value,
                 "significant": significant,
             }
         )
