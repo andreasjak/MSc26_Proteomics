@@ -37,7 +37,7 @@ ENRICHMENT_LIBRARIES = [
 	"KEGG_2026",
 	"Reactome_Pathways_2024",
 ]
-PERMUTATION_B = 1000
+PERMUTATION_B = 500
 
 # Classifiers (fixed methodology settings)
 LR_CONFIG = {
