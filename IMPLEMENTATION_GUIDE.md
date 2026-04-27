@@ -365,9 +365,11 @@ Each signal type planted at `SIM_SIGNALS_PER_TYPE` = 3 features per effect size 
   - For each k in TOPK_VALUES and for native cut-off:
     - Compute recall per signal type: fraction of planted signals of that type in top-k.
     - Compute FDR: fraction of top-k that is noise.
-- Output: `results/simulation/<method>/results.parquet` with columns `[repeat, signal_type, effect_size, k, recall, fdr]`.
+- Outputs:
+  - `results/simulation/<method>/recall.parquet` with columns `[repeat, signal_type, effect_size, k, recall]` (one row per (repeat, signal_type, effect_size, k)).
+  - `results/simulation/<method>/fdr.parquet` with columns `[repeat, k, fdr, n_selected]` (one row per (repeat, k); FDR is independent of signal_type/effect_size by construction).
 
-**Done when:** results.parquet exists for at least one method with all signal types represented.
+**Done when:** both parquets exist for at least one method with all signal types represented in `recall.parquet`.
 
 ## Stage 9: Cross-method aggregation
 
@@ -380,7 +382,8 @@ Each signal type planted at `SIM_SIGNALS_PER_TYPE` = 3 features per effect size 
 - `results/comparison/classifier_summary.parquet`: mean ± SD AUC / AUC-PR per (method, classifier, k).
 - `results/comparison/stability_summary.parquet`: per method: size of stable set at π = 0.3, top frequency, number ≥ 0.5, number ≥ 0.3.
 - `results/comparison/enrichment_summary.parquet`: per (method, library): BES, z, p_emp, n_significant_terms.
-- `results/comparison/simulation_summary.parquet`: mean recall and FDR per (method, signal_type, effect_size, k).
+- `results/comparison/recall_summary.parquet`: mean recall per (method, signal_type, effect_size, k).
+- `results/comparison/fdr_summary.parquet`: mean FDR per (method, k), with `n_selected_mean`.
 - `results/comparison/protein_overlap.parquet`: pairwise Jaccard of stable sets across methods.
 
 **Figures (saved to results/comparison/figures/):**

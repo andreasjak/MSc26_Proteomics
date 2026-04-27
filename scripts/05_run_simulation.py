@@ -205,7 +205,8 @@ def main() -> None:
         signals_per_type=int(args.signals_per_type),
     )
 
-    rows: list[dict[str, object]] = []
+    recall_rows: list[dict[str, object]] = []
+    fdr_rows: list[dict[str, object]] = []
     log_every = max(1, args.n_repeats // 5)
 
     for repeat in range(1, args.n_repeats + 1):
@@ -243,7 +244,14 @@ def main() -> None:
         selections.append(("native", native_idx))
 
         for k_label, selected_idx in selections:
-            fdr = _fdr(selected_idx, noise_set)
+            fdr_rows.append(
+                {
+                    "repeat": int(repeat),
+                    "k": str(k_label),
+                    "fdr": float(_fdr(selected_idx, noise_set)),
+                    "n_selected": int(selected_idx.size),
+                }
+            )
 
             for (signal_type, effect_size), truth_indices in truth_map.items():
                 denom = len(truth_indices)
@@ -255,14 +263,13 @@ def main() -> None:
                     )
                     recall = float(n_found / denom)
 
-                rows.append(
+                recall_rows.append(
                     {
                         "repeat": int(repeat),
                         "signal_type": str(signal_type),
                         "effect_size": float(effect_size),
                         "k": str(k_label),
                         "recall": float(recall),
-                        "fdr": float(fdr),
                     }
                 )
 
@@ -275,19 +282,30 @@ def main() -> None:
                 int(native_idx.size),
             )
 
-    results = pd.DataFrame(rows)
-    results = results.loc[:, ["repeat", "signal_type", "effect_size", "k", "recall", "fdr"]]
-    results = results.sort_values(
-        ["repeat", "signal_type", "effect_size", "k"],
-        kind="mergesort",
-    ).reset_index(drop=True)
+    recall_df = (
+        pd.DataFrame(recall_rows)
+        .loc[:, ["repeat", "signal_type", "effect_size", "k", "recall"]]
+        .sort_values(
+            ["repeat", "signal_type", "effect_size", "k"],
+            kind="mergesort",
+        )
+        .reset_index(drop=True)
+    )
+    fdr_df = (
+        pd.DataFrame(fdr_rows)
+        .loc[:, ["repeat", "k", "fdr", "n_selected"]]
+        .sort_values(["repeat", "k"], kind="mergesort")
+        .reset_index(drop=True)
+    )
 
     out_dir = args.output_dir / args.method
     out_dir.mkdir(parents=True, exist_ok=True)
-    results_path = out_dir / "results.parquet"
+    recall_path = out_dir / "recall.parquet"
+    fdr_path = out_dir / "fdr.parquet"
     meta_path = out_dir / "meta.json"
 
-    results.to_parquet(results_path, index=False)
+    recall_df.to_parquet(recall_path, index=False)
+    fdr_df.to_parquet(fdr_path, index=False)
 
     runtime_seconds = float(time.time() - start_time)
     meta = {
@@ -303,17 +321,19 @@ def main() -> None:
         "includes_native": True,
         "seed": int(args.seed),
         "repeat_seed_rule": "seed + repeat",
-        "results_path": str(results_path),
-        "n_rows": int(len(results)),
+        "recall_path": str(recall_path),
+        "fdr_path": str(fdr_path),
+        "n_recall_rows": int(len(recall_df)),
+        "n_fdr_rows": int(len(fdr_df)),
         "runtime_seconds": runtime_seconds,
     }
 
     with meta_path.open("w", encoding="utf-8") as f:
         json.dump(meta, f, indent=2)
 
-    logger.info("Saved simulation results: %s", results_path)
+    logger.info("Saved recall results: %s (rows=%d)", recall_path, len(recall_df))
+    logger.info("Saved FDR results: %s (rows=%d)", fdr_path, len(fdr_df))
     logger.info("Saved metadata: %s", meta_path)
-    logger.info("Rows written: %d", len(results))
     logger.info("Finished in %.2f s", runtime_seconds)
 
 
