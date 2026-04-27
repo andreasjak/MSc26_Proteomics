@@ -71,7 +71,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--random-significant",
         type=int,
-        default=30,
+        default=20,
         help="Native-cutoff size for random baseline significant mask.",
     )
     parser.add_argument(

@@ -65,9 +65,8 @@ def _inject_saturation(
 	rng: np.random.Generator,
 ) -> None:
 	base = rng.normal(0.0, 1.0, size=y.size)
-	shift = np.where(y == 1, effect_size, -effect_size)
+	shift = 0.5*np.where(y == 1, effect_size, -effect_size)
 	X[:, idx] = np.tanh(base + shift) + 0.05 * rng.normal(size=y.size)
-
 
 def _inject_u_shape(
 	X: np.ndarray,
@@ -80,7 +79,7 @@ def _inject_u_shape(
 	cls0 = ~cls1
 
 	a = max(float(effect_size), 0.1)
-	sigma = 1.0
+	sigma = 0.5
 	sigma0 = float(np.sqrt(a**2 + sigma**2))
 
 	signs = rng.choice(np.array([-1.0, 1.0]), size=int(cls1.sum()), replace=True)
@@ -100,7 +99,6 @@ def _inject_threshold(
 	x = base.copy()
 	x[active] += effect_size * np.where(y[active] == 1, 1.0, -1.0)
 	X[:, idx] = x
-
 
 def _inject_xor_pair(
 	X: np.ndarray,
@@ -122,9 +120,9 @@ def _inject_xor_pair(
 	sign_v = sign_u.copy()
 	sign_v[y == 1] *= -1.0
 
-	scale = max(float(effect_size), 0.1)
-	X[:, idx_a] = scale * sign_u * abs_u + 0.05 * rng.normal(size=n)
-	X[:, idx_b] = scale * sign_v * abs_v + 0.05 * rng.normal(size=n)
+	scale = 0.1 / max(float(effect_size), 0.1)
+	X[:, idx_a] = sign_u * abs_u + 0.05 * rng.normal(size=n) + rng.normal(0.0, scale, size=n)
+	X[:, idx_b] = sign_v * abs_v + 0.05 * rng.normal(size=n) + rng.normal(0.0, scale, size=n)
 
 
 def generate_simulated_dataset(
