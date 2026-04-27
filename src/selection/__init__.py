@@ -9,6 +9,7 @@ from .base import SelectionMethod, validate_selection_output
 from .mutual_info import MutualInfoSelection
 from .random import RandomSelection
 from .ttest import TTestSelection
+from .rf_shap import RFSHAPSelection
 
 
 MethodFactory = Callable[[argparse.Namespace], SelectionMethod]
@@ -22,6 +23,7 @@ METHOD_REGISTRY: dict[str, MethodFactory] = {
 	"mi": lambda args: MutualInfoSelection(
 		variant=getattr(args, "mi_variant", "adaptive"),
 	),
+    "rf_shap": lambda _: RFSHAPSelection(),
 }
 
 
@@ -30,6 +32,7 @@ __all__ = [
 	"RandomSelection",
 	"TTestSelection",
 	"MutualInfoSelection",
+    "RFSHAPSelection",
 	"MethodFactory",
 	"METHOD_REGISTRY",
 	"validate_selection_output",
