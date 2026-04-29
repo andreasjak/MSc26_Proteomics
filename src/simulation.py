@@ -188,12 +188,67 @@ def _inject_xor_pair(
 	X[:, idx_b] = fitted + final_sign * np.abs(residual)
 
 
+def _build_block_cov(
+	p: int,
+	block_size: int,
+	rng: np.random.Generator,
+	rho_low: float,
+	rho_high: float,
+) -> np.ndarray:
+	"""Block-diagonal correlation matrix with one shared rho per block.
+
+	Kept as a utility for inspection/visualisation. The hot-path sampler
+	`_sample_block_correlated` draws each block separately and does not
+	build this full matrix.
+	"""
+	cov = np.eye(p)
+	for start in range(0, p, block_size):
+		end = start + block_size
+		rho = float(rng.uniform(rho_low, rho_high))
+		block = np.full((block_size, block_size), rho)
+		np.fill_diagonal(block, 1.0)
+		cov[start:end, start:end] = block
+	return cov
+
+
+def _sample_block_correlated(
+	n: int,
+	p: int,
+	block_size: int,
+	rng: np.random.Generator,
+	rho_low: float,
+	rho_high: float,
+) -> np.ndarray:
+	"""Sample (n, p) with block-diagonal exchangeable correlation.
+
+	Each block of size `block_size` uses a shared off-diagonal
+	rho ~ U(rho_low, rho_high) sampled once per block, then is drawn via
+	`multivariate_normal` on the small block_size x block_size correlation
+	matrix. Avoids the O(p^3) Cholesky of the full p x p matrix.
+	"""
+	n_blocks = p // block_size
+	mean_b = np.zeros(block_size)
+	block = np.empty((block_size, block_size), dtype=float)
+	X = np.empty((n, p), dtype=float)
+	for b in range(n_blocks):
+		rho = float(rng.uniform(rho_low, rho_high))
+		block.fill(rho)
+		np.fill_diagonal(block, 1.0)
+		start = b * block_size
+		end = start + block_size
+		X[:, start:end] = rng.multivariate_normal(mean_b, block, size=n)
+	return X
+
+
 def generate_simulated_dataset(
 	n: int,
 	p: int,
 	class_prevalence: float,
 	signal_specs: list[dict[str, Any]],
 	seed: int,
+	block_size: int | None = None,
+	rho_low: float = 0.3,
+	rho_high: float = 0.8,
 ) -> tuple[np.ndarray, np.ndarray, dict[str, Any]]:
 	"""Return synthetic X, y and ground-truth signal index mapping.
 
@@ -227,6 +282,18 @@ def generate_simulated_dataset(
 	if not signal_specs:
 		raise ValueError("signal_specs must contain at least one signal definition.")
 
+	if block_size is not None:
+		if int(block_size) <= 0:
+			raise ValueError(f"block_size must be > 0 or None, got {block_size}.")
+		if p % int(block_size) != 0:
+			raise ValueError(
+				f"p={p} must be divisible by block_size={block_size}."
+			)
+		if not (0.0 <= float(rho_low) <= float(rho_high) < 1.0):
+			raise ValueError(
+				f"Require 0 <= rho_low <= rho_high < 1, got rho_low={rho_low}, rho_high={rho_high}."
+			)
+
 	for spec in signal_specs:
 		_validate_signal_spec(spec)
 
@@ -238,7 +305,16 @@ def generate_simulated_dataset(
 	pos_idx = rng.choice(n, size=n_pos, replace=False)
 	y[pos_idx] = 1
 
-	X = rng.normal(0.0, 1.0, size=(n, p)).astype(float)
+	if block_size is None:
+		X = rng.normal(0.0, 1.0, size=(n, p)).astype(float)
+		feature_block: list[int] = [-1] * p
+		blocks: list[list[int]] = []
+	else:
+		bs = int(block_size)
+		X = _sample_block_correlated(n, p, bs, rng, float(rho_low), float(rho_high))
+		n_blocks = p // bs
+		feature_block = [i // bs for i in range(p)]
+		blocks = [list(range(b * bs, (b + 1) * bs)) for b in range(n_blocks)]
 
 	available = np.arange(p, dtype=np.int64)
 	rng.shuffle(available)
@@ -326,6 +402,9 @@ def generate_simulated_dataset(
 	ground_truth["signal_records"] = signal_records
 	ground_truth["all_signal_indices"] = all_signal_indices
 	ground_truth["noise_indices"] = noise_indices
+	ground_truth["block_size"] = (int(block_size) if block_size is not None else None)
+	ground_truth["feature_block"] = feature_block
+	ground_truth["blocks"] = blocks
 
 	return X, y.astype(np.int64), ground_truth
 
