@@ -5,11 +5,13 @@ from __future__ import annotations
 from typing import Any
 
 import numpy as np
+from scipy.optimize import brentq
+from scipy.stats import norm
 
 
 SIGNAL_TYPES = {
 	"linear",
-	"saturation",
+	"bounded_variance",
 	"u_shape",
 	"threshold",
 	"xor_pair",
@@ -44,9 +46,10 @@ def _validate_signal_spec(spec: dict[str, Any]) -> None:
 			)
 
 
-# Injection convention: ``_inject_linear`` shifts the pre-filled N(0,1) column
-# by +/-0.5*effect, while the non-linear injectors (saturation, u_shape,
-# threshold, xor_pair) overwrite the column with a purpose-built signal.
+# Injection convention: every injector reads, modifies, and writes back the
+# existing column X[:, idx] (or, for xor_pair, X[:, idx_b]). No injector
+# overwrites a column with a freshly drawn signal, so any pre-existing
+# correlation structure in X is preserved as far as the transform allows.
 def _inject_linear(
 	X: np.ndarray,
 	y: np.ndarray,
@@ -57,34 +60,76 @@ def _inject_linear(
 	X[y == 0, idx] -= 0.5 * effect_size
 
 
-def _inject_saturation(
+def _inject_bounded_variance(
 	X: np.ndarray,
 	y: np.ndarray,
 	idx: int,
 	effect_size: float,
-	rng: np.random.Generator,
 ) -> None:
-	base = rng.normal(0.0, 1.0, size=y.size)
-	shift = 0.5*np.where(y == 1, effect_size, -effect_size)
-	X[:, idx] = np.tanh(base + shift) + 0.05 * rng.normal(size=y.size)
+	X[y == 1, idx] *= 1.0 + effect_size
+	np.clip(X[:, idx], -3.0, 3.0, out=X[:, idx])
+
+
+def _mixture_cdf(
+	x: np.ndarray | float,
+	mus: tuple[float, float],
+	sigmas: tuple[float, float],
+	weights: tuple[float, float],
+) -> np.ndarray | float:
+	return sum(
+		w * norm.cdf(x, loc=m, scale=s)
+		for w, m, s in zip(weights, mus, sigmas)
+	)
+
+
+def _mixture_ppf_scalar(
+	u: float,
+	mus: tuple[float, float],
+	sigmas: tuple[float, float],
+	weights: tuple[float, float],
+	lo: float = -20.0,
+	hi: float = 20.0,
+	xtol: float = 1e-12,
+) -> float:
+	return brentq(
+		lambda x: _mixture_cdf(x, mus, sigmas, weights) - u,
+		lo,
+		hi,
+		xtol=xtol,
+	)
+
+
+def _normal_to_mixture(
+	x: np.ndarray,
+	mus: tuple[float, float],
+	sigmas: tuple[float, float],
+	weights: tuple[float, float],
+) -> np.ndarray:
+	u = norm.cdf(x)
+	u = np.clip(u, 1e-15, 1 - 1e-15)
+	return np.array([_mixture_ppf_scalar(ui, mus, sigmas, weights) for ui in u])
+
 
 def _inject_u_shape(
 	X: np.ndarray,
 	y: np.ndarray,
 	idx: int,
 	effect_size: float,
-	rng: np.random.Generator,
 ) -> None:
 	cls1 = y == 1
 	cls0 = ~cls1
 
-	a = max(float(effect_size), 0.1)
+	a = float(effect_size)
 	sigma = 0.5
 	sigma0 = float(np.sqrt(a**2 + sigma**2))
 
-	signs = rng.choice(np.array([-1.0, 1.0]), size=int(cls1.sum()), replace=True)
-	X[cls1, idx] = signs * a + rng.normal(0.0, sigma, size=int(cls1.sum()))
-	X[cls0, idx] = rng.normal(0.0, sigma0, size=int(cls0.sum()))
+	X[cls0, idx] *= sigma0
+	X[cls1, idx] = _normal_to_mixture(
+		X[cls1, idx],
+		mus=(-a, a),
+		sigmas=(sigma, sigma),
+		weights=(0.5, 0.5),
+	)
 
 
 def _inject_threshold(
@@ -93,12 +138,18 @@ def _inject_threshold(
 	idx: int,
 	effect_size: float,
 	rng: np.random.Generator,
+	tau: float = 0.5,
 ) -> None:
-	base = rng.normal(0.0, 1.0, size=y.size)
-	active = base > 0.0
-	x = base.copy()
-	x[active] += effect_size * np.where(y[active] == 1, 1.0, -1.0)
-	X[:, idx] = x
+	column = X[:, idx]
+	above = np.where(column > tau)[0]
+	if above.size < 2:
+		return
+
+	score = 2.0 * effect_size * y[above] + rng.standard_normal(above.size)
+	sorted_vals = np.sort(column[above])
+	rank_of_score = np.argsort(np.argsort(score))
+	X[above, idx] = sorted_vals[rank_of_score]
+
 
 def _inject_xor_pair(
 	X: np.ndarray,
@@ -107,22 +158,34 @@ def _inject_xor_pair(
 	idx_b: int,
 	effect_size: float,
 	rng: np.random.Generator,
+	k: int = 3,
 ) -> None:
-	n = y.size
-	u = rng.normal(0.0, 1.0, size=n)
-	v = rng.normal(0.0, 1.0, size=n)
+	n, d = X.shape
+	z = X[:, idx_b]
 
-	sign_u = np.sign(u)
-	sign_u[sign_u == 0] = 1.0
-	abs_u = np.abs(u) + 0.05
-	abs_v = np.abs(v) + 0.05
+	others = np.array([j for j in range(d) if j != idx_b])
+	zc = z - z.mean()
+	cc = X[:, others] - X[:, others].mean(axis=0)
+	num = zc @ cc
+	den = np.linalg.norm(zc) * np.linalg.norm(cc, axis=0) + 1e-12
+	abs_corr = np.abs(num / den)
+	k_eff = min(k, others.size)
+	partners = others[np.argsort(abs_corr)[-k_eff:]]
 
-	sign_v = sign_u.copy()
-	sign_v[y == 1] *= -1.0
+	P = X[:, partners]
+	beta, *_ = np.linalg.lstsq(P, z, rcond=None)
+	fitted = P @ beta
+	residual = z - fitted
 
-	scale = 0.1 / max(float(effect_size), 0.1)
-	X[:, idx_a] = sign_u * abs_u + 0.05 * rng.normal(size=n) + rng.normal(0.0, scale, size=n)
-	X[:, idx_b] = sign_v * abs_v + 0.05 * rng.normal(size=n) + rng.normal(0.0, scale, size=n)
+	sign_a = np.sign(X[:, idx_a])
+	sign_a[sign_a == 0] = 1.0
+	flip = np.where(y == 1, -1.0, 1.0)
+	target_sign = sign_a * flip
+	p = 0.5 + 0.5 * float(np.clip(effect_size, 0.0, 1.0))
+	follow = rng.uniform(size=n) < p
+	final_sign = np.where(follow, target_sign, -target_sign)
+
+	X[:, idx_b] = fitted + final_sign * np.abs(residual)
 
 
 def generate_simulated_dataset(
@@ -219,10 +282,10 @@ def generate_simulated_dataset(
 				j = int(feature_idx)
 				if signal_type == "linear":
 					_inject_linear(X, y, j, effect_size)
-				elif signal_type == "saturation":
-					_inject_saturation(X, y, j, effect_size, rng)
+				elif signal_type == "bounded_variance":
+					_inject_bounded_variance(X, y, j, effect_size)
 				elif signal_type == "u_shape":
-					_inject_u_shape(X, y, j, effect_size, rng)
+					_inject_u_shape(X, y, j, effect_size)
 				elif signal_type == "threshold":
 					_inject_threshold(X, y, j, effect_size, rng)
 				else:

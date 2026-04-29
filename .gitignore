@@ -246,6 +246,7 @@ texfiles/
 
 # Claude markdown file
 CLAUDE.md
+.claude/
 
 # Stage 0 scaffold requirements
 data/raw/

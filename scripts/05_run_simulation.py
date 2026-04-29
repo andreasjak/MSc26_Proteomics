@@ -109,7 +109,7 @@ def _default_signal_specs(
 ) -> list[dict[str, object]]:
     specs: list[dict[str, object]] = []
     for effect in effect_sizes:
-        for signal_type in ["linear", "saturation", "u_shape", "threshold"]:
+        for signal_type in ["linear", "bounded_variance", "u_shape", "threshold"]:
             specs.append(
                 {
                     "signal_type": signal_type,
