@@ -16,6 +16,7 @@ sys.path.append(str(Path(__file__).resolve().parent.parent))
 
 from src.config import RESULTS_DIR
 from src.logging_utils import setup_logging
+from src.statistics import nadeau_bengio_se
 
 
 def parse_args() -> argparse.Namespace:
@@ -40,6 +41,12 @@ def parse_args() -> argparse.Namespace:
         type=Path,
         default=RESULTS_DIR / "comparison",
         help="Output directory for Stage 9 summaries (default: results/comparison).",
+    )
+    parser.add_argument(
+        "--splits-meta",
+        type=Path,
+        default=Path("data/processed/splits_meta.json"),
+        help="Path to splits_meta.json for Nadeau-Bengio n_train/n_test (default: data/processed/splits_meta.json).",
     )
     parser.add_argument(
         "--pi-threshold",
@@ -97,6 +104,8 @@ def aggregate_classifier_summary(
     output_dir: Path,
     strict_missing: bool,
     logger,
+    n_train: int,
+    n_test: int,
 ) -> tuple[pd.DataFrame, list[str]]:
     frames: list[pd.DataFrame] = []
     missing_methods: list[str] = []
@@ -138,6 +147,17 @@ def aggregate_classifier_summary(
         .sort_values(["method", "classifier", "k"], kind="mergesort")
         .reset_index(drop=True)
     )
+
+    summary["auc_se_nb"] = summary.apply(
+        lambda r: nadeau_bengio_se(r["auc_sd"], int(r["n_splits"]), n_train, n_test),
+        axis=1,
+    )
+    summary["aupr_se_nb"] = summary.apply(
+        lambda r: nadeau_bengio_se(r["aupr_sd"], int(r["n_splits"]), n_train, n_test),
+        axis=1,
+    )
+    summary["n_train"] = int(n_train)
+    summary["n_test"] = int(n_test)
 
     out_path = output_dir / "classifier_summary.parquet"
     summary.to_parquet(out_path, index=False)
@@ -537,12 +557,28 @@ def main() -> None:
     output_dir.mkdir(parents=True, exist_ok=True)
     (output_dir / "figures").mkdir(parents=True, exist_ok=True)
 
+    splits_meta = _load_json(args.splits_meta, strict_missing=True, logger=logger)
+    test_size = float(splits_meta["test_size"])
+    n_samples = int(splits_meta["n_samples"])
+    n_test = int(round(test_size * n_samples))
+    n_train = n_samples - n_test
+    logger.info(
+        "Nadeau-Bengio: n_samples=%d test_size=%.4f -> n_train=%d n_test=%d (ratio=%.4f)",
+        n_samples,
+        test_size,
+        n_train,
+        n_test,
+        n_test / n_train,
+    )
+
     classifier_summary, missing_classifier = aggregate_classifier_summary(
         methods=methods,
         results_dir=args.results_dir,
         output_dir=output_dir,
         strict_missing=args.strict_missing,
         logger=logger,
+        n_train=n_train,
+        n_test=n_test,
     )
 
     stability_summary, frequency_curve, missing_stability = aggregate_stability_summary(
@@ -612,6 +648,11 @@ def main() -> None:
             "simulation": sorted(set(missing_simulation)),
         },
         "pi_threshold": float(args.pi_threshold),
+        "nadeau_bengio": {
+            "n_train": int(n_train),
+            "n_test": int(n_test),
+            "test_train_ratio": float(n_test / n_train),
+        },
         "runtime_seconds": runtime_seconds,
         "outputs": {
             "classifier_summary": str(output_dir / "classifier_summary.parquet"),

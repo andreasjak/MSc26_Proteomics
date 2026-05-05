@@ -16,11 +16,14 @@ sys.path.append(str(Path(__file__).resolve().parent.parent))
 from src.config import (
     RANDOM_SEED,
     RESULTS_DIR,
+    SIM_BLOCK_SIZE,
     SIM_CLASS_PREVALENCE,
     SIM_EFFECT_SIZES,
     SIM_N,
     SIM_P,
     SIM_REPEATS,
+    SIM_RHO_HIGH,
+    SIM_RHO_LOW,
     SIM_SIGNALS_PER_TYPE,
     TOPK_VALUES,
 )
@@ -90,6 +93,28 @@ def parse_args() -> argparse.Namespace:
         help="Optional list of effect sizes. Defaults to SIM_EFFECT_SIZES from config.",
     )
     parser.add_argument(
+        "--block-size",
+        type=int,
+        default=(SIM_BLOCK_SIZE if SIM_BLOCK_SIZE is not None else 0),
+        help=(
+            "Block size for block-diagonal noise covariance. "
+            "Pass 0 to disable (independent features). "
+            f"Default: {SIM_BLOCK_SIZE}."
+        ),
+    )
+    parser.add_argument(
+        "--rho-low",
+        type=float,
+        default=SIM_RHO_LOW,
+        help=f"Lower bound for per-block rho ~ U(low, high). Default: {SIM_RHO_LOW}.",
+    )
+    parser.add_argument(
+        "--rho-high",
+        type=float,
+        default=SIM_RHO_HIGH,
+        help=f"Upper bound for per-block rho ~ U(low, high). Default: {SIM_RHO_HIGH}.",
+    )
+    parser.add_argument(
         "--random-significant",
         type=int,
         default=20,
@@ -109,7 +134,7 @@ def _default_signal_specs(
 ) -> list[dict[str, object]]:
     specs: list[dict[str, object]] = []
     for effect in effect_sizes:
-        for signal_type in ["linear", "saturation", "u_shape", "threshold"]:
+        for signal_type in ["linear", "bounded_variance", "u_shape", "threshold"]:
             specs.append(
                 {
                     "signal_type": signal_type,
@@ -151,6 +176,48 @@ def _fdr(selected: np.ndarray, noise_set: set[int]) -> float:
     return float(n_noise / selected.size)
 
 
+def _block_recall(
+    selected: np.ndarray,
+    truth_indices: set[int],
+    feature_block: list[int],
+    blocks: list[list[int]],
+) -> float:
+    if not truth_indices:
+        return float("nan")
+    selected_set = set(int(i) for i in selected.tolist())
+    if not feature_block or not blocks:
+        n_found = int(sum(1 for i in truth_indices if i in selected_set))
+        return float(n_found / len(truth_indices))
+    hits = 0
+    for i in truth_indices:
+        b = feature_block[int(i)]
+        if b < 0:
+            hits += int(int(i) in selected_set)
+        elif selected_set.intersection(blocks[b]):
+            hits += 1
+    return float(hits / len(truth_indices))
+
+
+def _block_fdr(
+    selected: np.ndarray,
+    signal_blocks: set[int],
+    feature_block: list[int],
+    noise_set: set[int],
+) -> float:
+    if selected.size == 0:
+        return float("nan")
+    if not feature_block or not signal_blocks:
+        return _fdr(selected, noise_set)
+    n_false = int(
+        sum(
+            1
+            for i in selected.tolist()
+            if feature_block[int(i)] not in signal_blocks
+        )
+    )
+    return float(n_false / selected.size)
+
+
 def main() -> None:
     start_time = time.time()
     args = parse_args()
@@ -169,6 +236,20 @@ def main() -> None:
         raise ValueError(
             f"--signals-per-type must be > 0, got {args.signals_per_type}."
         )
+    if args.block_size < 0:
+        raise ValueError(f"--block-size must be >= 0, got {args.block_size}.")
+    block_size_arg: int | None = args.block_size if args.block_size > 0 else None
+    if block_size_arg is not None:
+        if args.n_features % block_size_arg != 0:
+            raise ValueError(
+                f"--n-features ({args.n_features}) must be divisible by "
+                f"--block-size ({block_size_arg})."
+            )
+        if not (0.0 <= args.rho_low <= args.rho_high < 1.0):
+            raise ValueError(
+                f"Require 0 <= --rho-low <= --rho-high < 1, "
+                f"got rho_low={args.rho_low}, rho_high={args.rho_high}."
+            )
 
     effect_sizes = (
         [float(x) for x in args.effect_sizes]
@@ -186,13 +267,16 @@ def main() -> None:
 
     logger.info("Starting 05_run_simulation.py")
     logger.info(
-        "Args: method=%s n_repeats=%d n_samples=%d n_features=%d class_prevalence=%.3f signals_per_type=%d effect_sizes=%s seed=%d",
+        "Args: method=%s n_repeats=%d n_samples=%d n_features=%d class_prevalence=%.3f signals_per_type=%d block_size=%s rho_low=%.3f rho_high=%.3f effect_sizes=%s seed=%d",
         args.method,
         args.n_repeats,
         args.n_samples,
         args.n_features,
         args.class_prevalence,
         args.signals_per_type,
+        block_size_arg,
+        args.rho_low,
+        args.rho_high,
         effect_sizes,
         args.seed,
     )
@@ -219,6 +303,9 @@ def main() -> None:
             class_prevalence=float(args.class_prevalence),
             signal_specs=signal_specs,
             seed=repeat_seed,
+            block_size=block_size_arg,
+            rho_low=float(args.rho_low),
+            rho_high=float(args.rho_high),
         )
 
         ranked, scores, q_value, significant = method.select(X_train=X, y_train=y)
@@ -233,6 +320,14 @@ def main() -> None:
 
         truth_map = _aggregate_truth_by_type_effect(truth)
         noise_set = set(int(i) for i in truth.get("noise_indices", []))
+        feature_block = [int(b) for b in truth.get("feature_block", [])]
+        blocks = [[int(i) for i in blk] for blk in truth.get("blocks", [])]
+        signal_blocks: set[int] = set()
+        if feature_block:
+            for i in truth.get("all_signal_indices", []):
+                b = feature_block[int(i)]
+                if b >= 0:
+                    signal_blocks.add(int(b))
 
         selections: list[tuple[str, np.ndarray]] = []
         for k in TOPK_VALUES:
@@ -249,6 +344,9 @@ def main() -> None:
                     "repeat": int(repeat),
                     "k": str(k_label),
                     "fdr": float(_fdr(selected_idx, noise_set)),
+                    "block_fdr": float(
+                        _block_fdr(selected_idx, signal_blocks, feature_block, noise_set)
+                    ),
                     "n_selected": int(selected_idx.size),
                 }
             )
@@ -270,6 +368,9 @@ def main() -> None:
                         "effect_size": float(effect_size),
                         "k": str(k_label),
                         "recall": float(recall),
+                        "block_recall": float(
+                            _block_recall(selected_idx, truth_indices, feature_block, blocks)
+                        ),
                     }
                 )
 
@@ -284,7 +385,7 @@ def main() -> None:
 
     recall_df = (
         pd.DataFrame(recall_rows)
-        .loc[:, ["repeat", "signal_type", "effect_size", "k", "recall"]]
+        .loc[:, ["repeat", "signal_type", "effect_size", "k", "recall", "block_recall"]]
         .sort_values(
             ["repeat", "signal_type", "effect_size", "k"],
             kind="mergesort",
@@ -293,7 +394,7 @@ def main() -> None:
     )
     fdr_df = (
         pd.DataFrame(fdr_rows)
-        .loc[:, ["repeat", "k", "fdr", "n_selected"]]
+        .loc[:, ["repeat", "k", "fdr", "block_fdr", "n_selected"]]
         .sort_values(["repeat", "k"], kind="mergesort")
         .reset_index(drop=True)
     )
@@ -316,6 +417,9 @@ def main() -> None:
         "n_features": int(args.n_features),
         "class_prevalence": float(args.class_prevalence),
         "signals_per_type": int(args.signals_per_type),
+        "block_size": (int(block_size_arg) if block_size_arg is not None else None),
+        "rho_low": float(args.rho_low),
+        "rho_high": float(args.rho_high),
         "effect_sizes": [float(x) for x in effect_sizes],
         "topk_values": [int(k) for k in TOPK_VALUES],
         "includes_native": True,
