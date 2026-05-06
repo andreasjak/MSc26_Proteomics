@@ -397,15 +397,15 @@ def aggregate_simulation_summary(
     logger,
 ) -> tuple[pd.DataFrame, pd.DataFrame, list[str]]:
     recall_frames: list[pd.DataFrame] = []
-    fdr_frames: list[pd.DataFrame] = []
+    fdp_frames: list[pd.DataFrame] = []
     missing_methods: list[str] = []
     recall_required = {"repeat", "signal_type", "effect_size", "k", "recall"}
-    fdr_required = {"repeat", "k", "fdr", "n_selected"}
+    fdp_required = {"repeat", "k", "fdp", "n_selected"}
 
     for method in methods:
         method_dir = results_dir / "simulation" / method
         recall_path = method_dir / "recall.parquet"
-        fdr_path = method_dir / "fdr.parquet"
+        fdp_path = method_dir / "fdp.parquet"
 
         recall = _load_parquet(
             path=recall_path,
@@ -413,18 +413,18 @@ def aggregate_simulation_summary(
             strict_missing=strict_missing,
             logger=logger,
         )
-        fdr = _load_parquet(
-            path=fdr_path,
-            label=f"simulation fdr for method='{method}'",
+        fdp = _load_parquet(
+            path=fdp_path,
+            label=f"simulation fdp for method='{method}'",
             strict_missing=strict_missing,
             logger=logger,
         )
-        if recall is None or fdr is None:
+        if recall is None or fdp is None:
             missing_methods.append(method)
             continue
 
         _check_columns(recall, required=recall_required, label=str(recall_path))
-        _check_columns(fdr, required=fdr_required, label=str(fdr_path))
+        _check_columns(fdp, required=fdp_required, label=str(fdp_path))
 
         recall_chunk = recall.loc[
             :, ["repeat", "signal_type", "effect_size", "k", "recall"]
@@ -433,18 +433,18 @@ def aggregate_simulation_summary(
         recall_chunk["k"] = recall_chunk["k"].astype(str)
         recall_frames.append(recall_chunk)
 
-        fdr_chunk = fdr.loc[:, ["repeat", "k", "fdr", "n_selected"]].copy()
-        fdr_chunk["method"] = method
-        fdr_chunk["k"] = fdr_chunk["k"].astype(str)
-        fdr_frames.append(fdr_chunk)
+        fdp_chunk = fdp.loc[:, ["repeat", "k", "fdp", "n_selected"]].copy()
+        fdp_chunk["method"] = method
+        fdp_chunk["k"] = fdp_chunk["k"].astype(str)
+        fdp_frames.append(fdp_chunk)
 
-    if not recall_frames or not fdr_frames:
+    if not recall_frames or not fdp_frames:
         raise ValueError(
-            "No simulation inputs available. Cannot create recall_summary.parquet / fdr_summary.parquet."
+            "No simulation inputs available. Cannot create recall_summary.parquet / fdp_summary.parquet."
         )
 
     all_recall = pd.concat(recall_frames, ignore_index=True)
-    all_fdr = pd.concat(fdr_frames, ignore_index=True)
+    all_fdp = pd.concat(fdp_frames, ignore_index=True)
 
     recall_summary = (
         all_recall.groupby(["method", "signal_type", "effect_size", "k"], observed=False)
@@ -458,11 +458,11 @@ def aggregate_simulation_summary(
         .reset_index(drop=True)
     )
 
-    fdr_summary = (
-        all_fdr.groupby(["method", "k"], observed=False)
+    fdp_summary = (
+        all_fdp.groupby(["method", "k"], observed=False)
         .agg(
-            fdr_mean=("fdr", "mean"),
-            fdr_sd=("fdr", "std"),
+            fdp_mean=("fdp", "mean"),
+            fdp_sd=("fdp", "std"),
             n_repeats=("repeat", "nunique"),
             n_selected_mean=("n_selected", "mean"),
         )
@@ -472,12 +472,12 @@ def aggregate_simulation_summary(
     )
 
     recall_out = output_dir / "recall_summary.parquet"
-    fdr_out = output_dir / "fdr_summary.parquet"
+    fdp_out = output_dir / "fdp_summary.parquet"
     recall_summary.to_parquet(recall_out, index=False)
-    fdr_summary.to_parquet(fdr_out, index=False)
+    fdp_summary.to_parquet(fdp_out, index=False)
     logger.info("Saved recall summary: %s (rows=%d)", recall_out, len(recall_summary))
-    logger.info("Saved FDR summary: %s (rows=%d)", fdr_out, len(fdr_summary))
-    return recall_summary, fdr_summary, missing_methods
+    logger.info("Saved FDP summary: %s (rows=%d)", fdp_out, len(fdp_summary))
+    return recall_summary, fdp_summary, missing_methods
 
 
 def aggregate_protein_overlap(
@@ -606,7 +606,7 @@ def main() -> None:
         logger=logger,
     )
 
-    recall_summary, fdr_summary, missing_simulation = aggregate_simulation_summary(
+    recall_summary, fdp_summary, missing_simulation = aggregate_simulation_summary(
         methods=methods,
         results_dir=args.results_dir,
         output_dir=output_dir,
@@ -633,7 +633,7 @@ def main() -> None:
             "enrichment": sorted(set(enrichment_summary["method"].astype(str).tolist())),
             "simulation": sorted(
                 set(recall_summary["method"].astype(str).tolist())
-                .intersection(set(fdr_summary["method"].astype(str).tolist()))
+                .intersection(set(fdp_summary["method"].astype(str).tolist()))
             ),
             "overlap": sorted(
                 set(overlap["method_a"].astype(str).tolist())
@@ -662,7 +662,7 @@ def main() -> None:
             "full_data_overlap": str(output_dir / "full_data_overlap.parquet"),
             "enrichment_summary": str(output_dir / "enrichment_summary.parquet"),
             "recall_summary": str(output_dir / "recall_summary.parquet"),
-            "fdr_summary": str(output_dir / "fdr_summary.parquet"),
+            "fdp_summary": str(output_dir / "fdp_summary.parquet"),
             "figures_dir": str(output_dir / "figures"),
         },
     }

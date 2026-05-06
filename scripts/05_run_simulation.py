@@ -34,7 +34,7 @@ from src.simulation import generate_simulated_dataset
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Run simulation-based recall/FDR validation for one method.",
+        description="Run simulation-based recall/FDP validation for one method.",
     )
     parser.add_argument(
         "--method",
@@ -175,7 +175,7 @@ def _aggregate_truth_by_type_effect(
     return output
 
 
-def _fdr(selected: np.ndarray, noise_set: set[int]) -> float:
+def _fdp(selected: np.ndarray, noise_set: set[int]) -> float:
     if selected.size == 0:
         return float("nan")
     n_noise = int(sum(int(i) in noise_set for i in selected.tolist()))
@@ -204,7 +204,7 @@ def _block_recall(
     return float(hits / len(truth_indices))
 
 
-def _block_fdr(
+def _block_fdp(
     selected: np.ndarray,
     signal_blocks: set[int],
     feature_block: list[int],
@@ -213,7 +213,7 @@ def _block_fdr(
     if selected.size == 0:
         return float("nan")
     if not feature_block or not signal_blocks:
-        return _fdr(selected, noise_set)
+        return _fdp(selected, noise_set)
     n_false = int(
         sum(
             1
@@ -296,7 +296,7 @@ def main() -> None:
     )
 
     recall_rows: list[dict[str, object]] = []
-    fdr_rows: list[dict[str, object]] = []
+    fdp_rows: list[dict[str, object]] = []
     log_every = max(1, args.n_repeats // 5)
 
     for repeat in range(1, args.n_repeats + 1):
@@ -345,13 +345,13 @@ def main() -> None:
         selections.append(("native", native_idx))
 
         for k_label, selected_idx in selections:
-            fdr_rows.append(
+            fdp_rows.append(
                 {
                     "repeat": int(repeat),
                     "k": str(k_label),
-                    "fdr": float(_fdr(selected_idx, noise_set)),
-                    "block_fdr": float(
-                        _block_fdr(selected_idx, signal_blocks, feature_block, noise_set)
+                    "fdp": float(_fdp(selected_idx, noise_set)),
+                    "block_fdp": float(
+                        _block_fdp(selected_idx, signal_blocks, feature_block, noise_set)
                     ),
                     "n_selected": int(selected_idx.size),
                 }
@@ -398,9 +398,9 @@ def main() -> None:
         )
         .reset_index(drop=True)
     )
-    fdr_df = (
-        pd.DataFrame(fdr_rows)
-        .loc[:, ["repeat", "k", "fdr", "block_fdr", "n_selected"]]
+    fdp_df = (
+        pd.DataFrame(fdp_rows)
+        .loc[:, ["repeat", "k", "fdp", "block_fdp", "n_selected"]]
         .sort_values(["repeat", "k"], kind="mergesort")
         .reset_index(drop=True)
     )
@@ -408,11 +408,11 @@ def main() -> None:
     out_dir = args.output_dir / args.method
     out_dir.mkdir(parents=True, exist_ok=True)
     recall_path = out_dir / "recall.parquet"
-    fdr_path = out_dir / "fdr.parquet"
+    fdp_path = out_dir / "fdp.parquet"
     meta_path = out_dir / "meta.json"
 
     recall_df.to_parquet(recall_path, index=False)
-    fdr_df.to_parquet(fdr_path, index=False)
+    fdp_df.to_parquet(fdp_path, index=False)
 
     runtime_seconds = float(time.time() - start_time)
     meta = {
@@ -432,9 +432,9 @@ def main() -> None:
         "seed": int(args.seed),
         "repeat_seed_rule": "seed + repeat",
         "recall_path": str(recall_path),
-        "fdr_path": str(fdr_path),
+        "fdp_path": str(fdp_path),
         "n_recall_rows": int(len(recall_df)),
-        "n_fdr_rows": int(len(fdr_df)),
+        "n_fdp_rows": int(len(fdp_df)),
         "runtime_seconds": runtime_seconds,
     }
 
@@ -442,7 +442,7 @@ def main() -> None:
         json.dump(meta, f, indent=2)
 
     logger.info("Saved recall results: %s (rows=%d)", recall_path, len(recall_df))
-    logger.info("Saved FDR results: %s (rows=%d)", fdr_path, len(fdr_df))
+    logger.info("Saved FDP results: %s (rows=%d)", fdp_path, len(fdp_df))
     logger.info("Saved metadata: %s", meta_path)
     logger.info("Finished in %.2f s", runtime_seconds)
 
