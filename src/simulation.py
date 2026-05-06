@@ -343,7 +343,8 @@ def generate_simulated_dataset(
 			for i in range(n_pairs):
 				a = int(idx[2 * i])
 				b = int(idx[2 * i + 1])
-				_inject_xor_pair(X, y, a, b, effect_size, rng)
+				k = block_size - 1 if block_size is not None else 3
+				_inject_xor_pair(X, y, a, b, effect_size, rng, k)
 				signal_records.append(
 					{
 						"signal_type": signal_type,
