@@ -5,6 +5,8 @@ from __future__ import annotations
 import numpy as np
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.linear_model import LogisticRegression
+from sklearn.pipeline import Pipeline
+from sklearn.preprocessing import StandardScaler
 
 from src.config import LR_CONFIG, RF_CONFIG, XGB_CONFIG, XGB_SCALE_POS_WEIGHT_MODE
 
@@ -37,7 +39,10 @@ def build_logreg(random_state: int | None = None) -> LogisticRegression:
 	params = dict(LR_CONFIG)
 	if random_state is not None:
 		params["random_state"] = int(random_state)
-	return LogisticRegression(**params)
+	return Pipeline([
+        ("scaler", StandardScaler()),
+        ("clf", LogisticRegression(**params)),
+    ])
 
 
 def build_rf(random_state: int | None = None) -> RandomForestClassifier:
