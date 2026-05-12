@@ -20,9 +20,10 @@ METHOD_REGISTRY: dict[str, MethodFactory] = {
 	"random": lambda args: RandomSelection(
 		n_significant=getattr(args, "random_significant", 20),
 	),
-	"mi": lambda args: MutualInfoSelection(
-		variant=getattr(args, "mi_variant", "adaptive"),
-	),
+	#"mi": lambda args: MutualInfoSelection(
+	#	variant=getattr(args, "mi_variant", "adaptive"),
+	#),
+    "mi": lambda args: MutualInfoSelection(),
     "rf_shap": lambda _: RFSHAPSelection(),
 }
 
