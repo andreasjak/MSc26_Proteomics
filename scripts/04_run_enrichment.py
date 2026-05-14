@@ -15,7 +15,6 @@ sys.path.append(str(Path(__file__).resolve().parent.parent))
 
 from src.config import (
     BES_CAP_C,
-    BES_JACCARD_TAU,
     DATA_PROCESSED,
     ENRICHMENT_LIBRARIES,
     ENRICHMENT_Q_THRESHOLD,
@@ -319,7 +318,6 @@ def main() -> None:
             term_df=term_df,
             gene_list=gene_list,
             c=BES_CAP_C,
-            tau=BES_JACCARD_TAU,
             q_threshold=ENRICHMENT_Q_THRESHOLD,
         )
 
@@ -363,7 +361,6 @@ def main() -> None:
                     library=library,
                     b_perm=args.b_perm,
                     c=BES_CAP_C,
-                    tau=BES_JACCARD_TAU,
                     q_threshold=ENRICHMENT_Q_THRESHOLD,
                     seed=args.seed,
                     progress_callback=_log_progress,
