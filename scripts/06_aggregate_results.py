@@ -16,7 +16,7 @@ sys.path.append(str(Path(__file__).resolve().parent.parent))
 
 from src.config import RESULTS_DIR
 from src.logging_utils import setup_logging
-from src.statistics import nadeau_bengio_se
+from src.statistics import nadeau_bengio_se, paired_sign_flip_test
 
 
 def parse_args() -> argparse.Namespace:
@@ -53,6 +53,18 @@ def parse_args() -> argparse.Namespace:
         type=float,
         default=0.3,
         help="Stability frequency threshold for stable-size summary (default: 0.3).",
+    )
+    parser.add_argument(
+        "--n-permutations",
+        type=int,
+        default=10000,
+        help="Number of sign-flip permutations for cross-method p-values (default: 10000).",
+    )
+    parser.add_argument(
+        "--permutation-seed",
+        type=int,
+        default=0,
+        help="Seed for the permutation RNG (default: 0).",
     )
     parser.add_argument(
         "--strict-missing",
@@ -106,7 +118,7 @@ def aggregate_classifier_summary(
     logger,
     n_train: int,
     n_test: int,
-) -> tuple[pd.DataFrame, list[str]]:
+) -> tuple[pd.DataFrame, pd.DataFrame, list[str]]:
     frames: list[pd.DataFrame] = []
     missing_methods: list[str] = []
 
@@ -162,7 +174,7 @@ def aggregate_classifier_summary(
     out_path = output_dir / "classifier_summary.parquet"
     summary.to_parquet(out_path, index=False)
     logger.info("Saved classifier summary: %s (rows=%d)", out_path, len(summary))
-    return summary, missing_methods
+    return summary, all_scores, missing_methods
 
 
 def _mean_pairwise_jaccard_topk(
@@ -480,6 +492,117 @@ def aggregate_simulation_summary(
     return recall_summary, fdp_summary, missing_methods
 
 
+def aggregate_cross_method_pvalues(
+    all_scores: pd.DataFrame,
+    output_dir: Path,
+    n_permutations: int,
+    seed: int,
+    logger,
+) -> pd.DataFrame:
+    """Paired sign-flip permutation p-values for every method pair.
+
+    For each (classifier, k, metric), tests every unordered pair of methods
+    by inner-joining their per-split metrics on ``split_id`` and applying
+    :func:`src.statistics.paired_sign_flip_test`.
+    """
+    rng = np.random.default_rng(seed)
+    metrics = ("auc", "aupr")
+    rows: list[dict[str, object]] = []
+
+    groupings = all_scores.groupby(["classifier", "k"], observed=False, sort=True)
+    for (classifier, k), group in groupings:
+        methods_here = sorted(group["method"].astype(str).unique().tolist())
+        if len(methods_here) < 2:
+            continue
+        for method_a, method_b in combinations_with_replacement(methods_here, 2):
+            if method_a >= method_b:
+                continue
+            scores_a = group.loc[group["method"] == method_a, ["split_id", "auc", "aupr"]]
+            scores_b = group.loc[group["method"] == method_b, ["split_id", "auc", "aupr"]]
+            merged = scores_a.merge(
+                scores_b,
+                on="split_id",
+                how="inner",
+                suffixes=("_a", "_b"),
+            )
+            for metric in metrics:
+                pair = merged.loc[:, [f"{metric}_a", f"{metric}_b"]].dropna()
+                n_pair = int(len(pair))
+                if n_pair < 2:
+                    rows.append(
+                        {
+                            "classifier": str(classifier),
+                            "k": str(k),
+                            "metric": metric,
+                            "method_a": method_a,
+                            "method_b": method_b,
+                            "n_splits_common": n_pair,
+                            "mean_diff": float("nan"),
+                            "p_value": float("nan"),
+                            "n_permutations": int(n_permutations),
+                            "seed": int(seed),
+                        }
+                    )
+                    continue
+                d = pair[f"{metric}_a"].to_numpy() - pair[f"{metric}_b"].to_numpy()
+                result = paired_sign_flip_test(
+                    d, n_permutations=n_permutations, rng=rng
+                )
+                rows.append(
+                    {
+                        "classifier": str(classifier),
+                        "k": str(k),
+                        "metric": metric,
+                        "method_a": method_a,
+                        "method_b": method_b,
+                        "n_splits_common": n_pair,
+                        "mean_diff": float(result["mean_diff"]),
+                        "p_value": float(result["p_value"]),
+                        "n_permutations": int(result["n_permutations"]),
+                        "seed": int(seed),
+                    }
+                )
+
+    if not rows:
+        logger.warning(
+            "No method pairs available for cross-method p-values (need >= 2 methods)."
+        )
+        pvalues = pd.DataFrame(
+            columns=[
+                "classifier",
+                "k",
+                "metric",
+                "method_a",
+                "method_b",
+                "n_splits_common",
+                "mean_diff",
+                "p_value",
+                "n_permutations",
+                "seed",
+            ]
+        )
+    else:
+        pvalues = (
+            pd.DataFrame(rows)
+            .sort_values(
+                ["classifier", "k", "metric", "method_a", "method_b"],
+                kind="mergesort",
+            )
+            .reset_index(drop=True)
+        )
+
+    out_path = output_dir / "cross_method_pvalues.parquet"
+    pvalues.to_parquet(out_path, index=False)
+    logger.info(
+        "Saved cross-method p-values: %s (rows=%d, R=%d, seed=%d)",
+        out_path,
+        len(pvalues),
+        n_permutations,
+        seed,
+    )
+    return pvalues
+
+
 def aggregate_protein_overlap(
     protein_sets: dict[str, set[str]],
     output_dir: Path,
@@ -571,7 +694,7 @@ def main() -> None:
         n_test / n_train,
     )
 
-    classifier_summary, missing_classifier = aggregate_classifier_summary(
+    classifier_summary, classifier_scores, missing_classifier = aggregate_classifier_summary(
         methods=methods,
         results_dir=args.results_dir,
         output_dir=output_dir,
@@ -579,6 +702,18 @@ def main() -> None:
         logger=logger,
         n_train=n_train,
         n_test=n_test,
+    )
+
+    if args.n_permutations <= 0:
+        raise ValueError(
+            f"--n-permutations must be > 0, got {args.n_permutations}."
+        )
+    cross_method_pvalues = aggregate_cross_method_pvalues(
+        all_scores=classifier_scores,
+        output_dir=output_dir,
+        n_permutations=int(args.n_permutations),
+        seed=int(args.permutation_seed),
+        logger=logger,
     )
 
     stability_summary, frequency_curve, missing_stability = aggregate_stability_summary(
@@ -656,6 +791,7 @@ def main() -> None:
         "runtime_seconds": runtime_seconds,
         "outputs": {
             "classifier_summary": str(output_dir / "classifier_summary.parquet"),
+            "cross_method_pvalues": str(output_dir / "cross_method_pvalues.parquet"),
             "stability_summary": str(output_dir / "stability_summary.parquet"),
             "selection_frequency_curve": str(output_dir / "selection_frequency_curve.parquet"),
             "full_data_summary": str(output_dir / "full_data_summary.parquet"),
