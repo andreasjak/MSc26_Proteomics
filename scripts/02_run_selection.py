@@ -75,12 +75,6 @@ def parse_args() -> argparse.Namespace:
         help="Native-cutoff size for random baseline significant mask.",
     )
     parser.add_argument(
-        "--rf-native-pool-size",
-        type=int,
-        default=50,
-        help="Pool size for random forest native selection.",
-    )
-    parser.add_argument(
         "--full-data",
         action="store_true",
         help="Run selection once on the full cohort and write full_data_ranking.parquet.",

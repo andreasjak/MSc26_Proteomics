@@ -6,7 +6,7 @@ import numpy as np
 from sklearn.ensemble import RandomForestClassifier
 import shap
 
-from .base import SelectionMethod, validate_selection_output
+from .base import SelectionMethod
 
 
 class RFSHAPSelection(SelectionMethod):
@@ -28,7 +28,7 @@ class RFSHAPSelection(SelectionMethod):
         reduces variance of the SHAP estimates at the cost of compute time.
         An empirical stability analysis showed that with 500 trees the overlap
         in top-25 ranked proteins between independent runs was approximately
-        44%, whereas with 10 000 trees this increased to approximately 85%.
+        44%, whereas with 10 000 trees this increased to approximately 80%.
     """
 
     name = "rf_shap"
@@ -150,11 +150,4 @@ class RFSHAPSelection(SelectionMethod):
         q_value        = np.full(n_proteins, np.nan, dtype=float)
         significant    = np.zeros(n_proteins, dtype=bool)
 
-        return validate_selection_output(
-            ranked_indices,
-            scores,
-            q_value,
-            significant,
-            n_proteins,
-            self.name,
-        )
+        return ranked_indices, scores, q_value, significant 
