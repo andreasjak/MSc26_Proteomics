@@ -119,17 +119,29 @@ def _inject_u_shape(
 	cls1 = y == 1
 	cls0 = ~cls1
 
-	a = float(effect_size)
+	#a = float(effect_size)
+	#sigma = 0.5
+	#sigma0 = float(np.sqrt(a**2 + sigma**2))
+#
+	#X[cls0, idx] *= sigma0
+	#X[cls1, idx] = _normal_to_mixture(
+	#	X[cls1, idx],
+	#	mus=(-a, a),
+	#	sigmas=(sigma, sigma),
+	#	weights=(0.5, 0.5),
+	#)
+
+	a = 1.5*float(effect_size)
 	sigma = 0.5
 	sigma0 = float(np.sqrt(a**2 + sigma**2))
 
-	X[cls0, idx] *= sigma0
+	#X[cls0, idx] *= sigma0
 	X[cls1, idx] = _normal_to_mixture(
 		X[cls1, idx],
 		mus=(-a, a),
 		sigmas=(sigma, sigma),
 		weights=(0.5, 0.5),
-	)
+	) / sigma0
 
 
 def _inject_threshold(
