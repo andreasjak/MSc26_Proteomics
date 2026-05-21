@@ -27,8 +27,8 @@ def parse_args() -> argparse.Namespace:
         "--methods",
         type=str,
         nargs="*",
-        default=["ttest", "random"],
-        help="Methods to aggregate (default: ttest random).",
+        default=["ttest", "random", "mi", "rf_shap"],
+        help="Methods to aggregate (default: ttest random mi rf_shap).",
     )
     parser.add_argument(
         "--results-dir",
